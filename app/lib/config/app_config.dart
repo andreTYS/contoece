@@ -15,4 +15,14 @@ class AppConfig {
   // Endpoints
   static const String chatEndpoint = '/chat';
   static const String healthEndpoint = '/health';
+  static const String adminDocumentsEndpoint = '/admin/documents';
+  static const String adminUploadEndpoint = '/admin/upload';
+  static const String adminDeleteEndpoint = '/admin/document';
+
+  // Correos que reciben rol admin automáticamente al primer login
+  // Agrega aquí los correos de los administradores
+  static const List<String> adminEmails = [
+    // 'admin@oece.gob.pe',
+    // 'tucorreo@gmail.com',
+  ];
 }
