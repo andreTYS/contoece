@@ -1,0 +1,42 @@
+name: contrataciones_oece
+description: Asistente IA para Contrataciones OECE - Peru
+version: 1.0.0+1
+publish_to: "none"
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Firebase & Auth
+  firebase_core: ^2.27.1
+  firebase_auth: ^4.17.9
+  google_sign_in: ^6.2.1
+
+  # HTTP & Networking
+  http: ^1.2.1
+
+  # URL Launcher (WhatsApp)
+  url_launcher: ^6.2.6
+
+  # Local Storage
+  shared_preferences: ^2.2.3
+
+  # Markdown rendering for AI responses
+  flutter_markdown: ^0.6.22
+
+  # UI
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
