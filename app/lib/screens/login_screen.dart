@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import '../main.dart';
 import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
-import 'chat_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -45,7 +45,7 @@ class _LoginScreenState extends State<LoginScreen>
       final credential = await _authService.signInWithGoogle();
       if (credential != null && mounted) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const ChatScreen()),
+          MaterialPageRoute(builder: (_) => const AuthGate()),
         );
       }
     } catch (e) {
