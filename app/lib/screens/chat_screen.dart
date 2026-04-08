@@ -226,6 +226,16 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _signOut() async {
+    if (AppConfig.demoMode) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Modo demo activo — login desactivado. Cambia demoMode a false en app_config.dart.'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(

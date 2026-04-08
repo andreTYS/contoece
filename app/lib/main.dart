@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'config/app_config.dart';
 import 'firebase_options.dart';
 import 'screens/chat_screen.dart';
 import 'screens/login_screen.dart';
@@ -10,9 +11,13 @@ import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+
+  if (!AppConfig.demoMode) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  }
+
   runApp(const OeceIaApp());
 }
 
@@ -25,11 +30,22 @@ class OeceIaApp extends StatelessWidget {
       title: 'OECE-IA Contrataciones',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.theme,
-      home: const AuthGate(),
+      home: AppConfig.demoMode ? const _DemoEntry() : const AuthGate(),
     );
   }
 }
 
+/// Modo demo: entra directo al chat sin login ni Firebase.
+class _DemoEntry extends StatelessWidget {
+  const _DemoEntry();
+
+  @override
+  Widget build(BuildContext context) {
+    return const ChatScreen(role: 'admin'); // admin para ver también el panel
+  }
+}
+
+/// Flujo real: espera la sesión de Firebase y asigna rol.
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
@@ -50,7 +66,6 @@ class AuthGate extends StatelessWidget {
   }
 }
 
-/// Después de autenticarse, crea el perfil en Firestore y redirige según el rol.
 class _RoleGate extends StatefulWidget {
   final User user;
   const _RoleGate({required this.user});
@@ -61,16 +76,11 @@ class _RoleGate extends StatefulWidget {
 
 class _RoleGateState extends State<_RoleGate> {
   final FirestoreService _firestoreService = FirestoreService();
-  final AuthService _authService = AuthService();
 
   @override
   void initState() {
     super.initState();
-    _setupUser();
-  }
-
-  Future<void> _setupUser() async {
-    await _firestoreService.ensureUserProfile(
+    _firestoreService.ensureUserProfile(
       uid: widget.user.uid,
       email: widget.user.email ?? '',
       displayName: widget.user.displayName ?? widget.user.email ?? 'Usuario',
@@ -83,8 +93,7 @@ class _RoleGateState extends State<_RoleGate> {
       stream: _firestoreService.userRoleStream(widget.user.uid),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const _LoadingScreen();
-        final role = snapshot.data!;
-        return ChatScreen(role: role);
+        return ChatScreen(role: snapshot.data!);
       },
     );
   }

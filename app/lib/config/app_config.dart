@@ -1,4 +1,9 @@
 class AppConfig {
+  // ── MODO DEMO ──────────────────────────────────────────────────────────────
+  // true  → salta Firebase/login, entra directo al chat (para ver el diseño)
+  // false → flujo real con Google Sign-In y Firestore
+  static const bool demoMode = true;
+
   // URL del servidor local (cambiar a dominio cuando se despliegue)
   static const String serverUrl = 'http://localhost:8000';
 

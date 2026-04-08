@@ -1,43 +1,51 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import '../config/app_config.dart';
 
 class AuthService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
+  // En modo demo usamos un usuario ficticio
+  static const String _demoUserId = 'demo-user-oece';
+  static const String _demoName = 'Usuario Demo';
+  static const String _demoEmail = 'demo@oece.gob.pe';
 
-  Stream<User?> get authStateChanges => _auth.authStateChanges();
-  User? get currentUser => _auth.currentUser;
+  FirebaseAuth? get _auth =>
+      AppConfig.demoMode ? null : FirebaseAuth.instance;
+  GoogleSignIn? get _googleSignIn =>
+      AppConfig.demoMode ? null : GoogleSignIn();
 
   Future<UserCredential?> signInWithGoogle() async {
+    if (AppConfig.demoMode) return null;
     try {
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      final googleUser = await _googleSignIn!.signIn();
       if (googleUser == null) return null;
-
-      final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
-
+      final googleAuth = await googleUser.authentication;
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
-
-      return await _auth.signInWithCredential(credential);
+      return await _auth!.signInWithCredential(credential);
     } catch (e) {
       throw Exception('Error al iniciar sesión con Google: $e');
     }
   }
 
   Future<void> signOut() async {
-    await Future.wait([
-      _auth.signOut(),
-      _googleSignIn.signOut(),
-    ]);
+    if (AppConfig.demoMode) return;
+    await Future.wait([_auth!.signOut(), _googleSignIn!.signOut()]);
   }
 
-  String get userDisplayName =>
-      currentUser?.displayName ?? currentUser?.email ?? 'Usuario';
+  String get userDisplayName => AppConfig.demoMode
+      ? _demoName
+      : (_auth?.currentUser?.displayName ??
+          _auth?.currentUser?.email ??
+          'Usuario');
 
-  String? get userPhotoUrl => currentUser?.photoURL;
-  String? get userEmail => currentUser?.email;
-  String get userId => currentUser?.uid ?? '';
+  String? get userPhotoUrl =>
+      AppConfig.demoMode ? null : _auth?.currentUser?.photoURL;
+
+  String? get userEmail =>
+      AppConfig.demoMode ? _demoEmail : _auth?.currentUser?.email;
+
+  String get userId =>
+      AppConfig.demoMode ? _demoUserId : (_auth?.currentUser?.uid ?? '');
 }

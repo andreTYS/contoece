@@ -3,23 +3,23 @@ import '../config/app_config.dart';
 import '../models/message_model.dart';
 
 class FirestoreService {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  FirebaseFirestore? get _db =>
+      AppConfig.demoMode ? null : FirebaseFirestore.instance;
 
   // ─── Roles ──────────────────────────────────────────────────────────────────
 
-  /// Crea o actualiza el perfil del usuario al hacer login.
-  /// Si el correo está en adminEmails, recibe rol admin automáticamente.
   Future<void> ensureUserProfile({
     required String uid,
     required String email,
     required String displayName,
   }) async {
-    final ref = _db.collection('users').doc(uid);
+    if (AppConfig.demoMode) return;
+    final ref = _db!.collection('users').doc(uid);
     final snap = await ref.get();
-
     if (!snap.exists) {
-      final role =
-          AppConfig.adminEmails.contains(email.toLowerCase()) ? 'admin' : 'user';
+      final role = AppConfig.adminEmails.contains(email.toLowerCase())
+          ? 'admin'
+          : 'user';
       await ref.set({
         'email': email,
         'displayName': displayName,
@@ -29,46 +29,66 @@ class FirestoreService {
     }
   }
 
-  /// Retorna el rol del usuario: 'admin' | 'user'
   Future<String> getUserRole(String uid) async {
+    if (AppConfig.demoMode) return 'admin';
     try {
-      final snap = await _db.collection('users').doc(uid).get();
+      final snap = await _db!.collection('users').doc(uid).get();
       return snap.data()?['role'] as String? ?? 'user';
     } catch (_) {
       return 'user';
     }
   }
 
-  /// Stream del rol para detectar cambios en tiempo real
   Stream<String> userRoleStream(String uid) {
-    return _db.collection('users').doc(uid).snapshots().map(
+    if (AppConfig.demoMode) return Stream.value('admin');
+    return _db!.collection('users').doc(uid).snapshots().map(
           (snap) => snap.data()?['role'] as String? ?? 'user',
         );
   }
 
-  /// Cambia el rol de un usuario (solo lo puede llamar un admin)
   Future<void> setUserRole(String uid, String role) async {
-    await _db.collection('users').doc(uid).update({'role': role});
+    if (AppConfig.demoMode) return;
+    await _db!.collection('users').doc(uid).update({'role': role});
   }
 
-  /// Lista todos los usuarios (para panel admin)
   Future<List<Map<String, dynamic>>> listUsers() async {
-    final snap = await _db
+    if (AppConfig.demoMode) {
+      // Usuarios ficticios para demo
+      return [
+        {
+          'uid': 'demo-user-oece',
+          'displayName': 'Usuario Demo',
+          'email': 'demo@oece.gob.pe',
+          'role': 'admin',
+        },
+        {
+          'uid': 'demo-user-2',
+          'displayName': 'María García',
+          'email': 'mgarcia@oece.gob.pe',
+          'role': 'user',
+        },
+        {
+          'uid': 'demo-user-3',
+          'displayName': 'Carlos Ríos',
+          'email': 'crios@contrataciones.gob.pe',
+          'role': 'user',
+        },
+      ];
+    }
+    final snap = await _db!
         .collection('users')
         .orderBy('createdAt', descending: true)
         .get();
-    return snap.docs
-        .map((d) => {'uid': d.id, ...d.data()})
-        .toList();
+    return snap.docs.map((d) => {'uid': d.id, ...d.data()}).toList();
   }
 
   // ─── Historial de conversaciones ────────────────────────────────────────────
 
   CollectionReference<Map<String, dynamic>> _messagesRef(String uid) =>
-      _db.collection('conversations').doc(uid).collection('messages');
+      _db!.collection('conversations').doc(uid).collection('messages');
 
-  /// Guarda un mensaje en Firestore
   Future<void> saveMessage(String uid, ChatMessage message) async {
+    if (AppConfig.demoMode) return; // En demo no se persiste
     await _messagesRef(uid).doc(message.id).set({
       'content': message.content,
       'role': message.role == MessageRole.user ? 'user' : 'assistant',
@@ -77,13 +97,12 @@ class FirestoreService {
     });
   }
 
-  /// Carga los últimos N mensajes del historial
   Future<List<ChatMessage>> loadHistory(String uid, {int limit = 50}) async {
+    if (AppConfig.demoMode) return []; // Demo empieza con chat vacío
     final snap = await _messagesRef(uid)
         .orderBy('timestamp', descending: false)
         .limitToLast(limit)
         .get();
-
     return snap.docs.map((doc) {
       final data = doc.data();
       return ChatMessage(
@@ -96,8 +115,8 @@ class FirestoreService {
     }).toList();
   }
 
-  /// Stream del historial en tiempo real
   Stream<List<ChatMessage>> historyStream(String uid) {
+    if (AppConfig.demoMode) return Stream.value([]);
     return _messagesRef(uid)
         .orderBy('timestamp', descending: false)
         .limitToLast(100)
@@ -116,10 +135,10 @@ class FirestoreService {
             }).toList());
   }
 
-  /// Borra toda la conversación de un usuario
   Future<void> clearHistory(String uid) async {
+    if (AppConfig.demoMode) return;
     final snap = await _messagesRef(uid).get();
-    final batch = _db.batch();
+    final batch = _db!.batch();
     for (final doc in snap.docs) {
       batch.delete(doc.reference);
     }
