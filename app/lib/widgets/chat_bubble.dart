@@ -5,231 +5,204 @@ import '../theme/app_theme.dart';
 
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
-
   const ChatBubble({super.key, required this.message});
 
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == MessageRole.user;
-
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-      child: Row(
-        mainAxisAlignment:
-            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (!isUser) _buildAvatar(),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Column(
-              crossAxisAlignment:
-                  isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-              children: [
-                Container(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.of(context).size.width * 0.75,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isUser ? AppTheme.userBubble : AppTheme.aiBubble,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(18),
-                      topRight: const Radius.circular(18),
-                      bottomLeft: Radius.circular(isUser ? 18 : 4),
-                      bottomRight: Radius.circular(isUser ? 4 : 18),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.06),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  child: message.isLoading
-                      ? _buildTypingIndicator()
-                      : isUser
-                          ? Text(
-                              message.content,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 15,
-                                height: 1.4,
-                              ),
-                            )
-                          : MarkdownBody(
-                              data: message.content,
-                              styleSheet: MarkdownStyleSheet(
-                                p: const TextStyle(
-                                  color: AppTheme.textDark,
-                                  fontSize: 15,
-                                  height: 1.4,
-                                ),
-                                strong: const TextStyle(
-                                  color: AppTheme.primaryBlue,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                blockquoteDecoration: BoxDecoration(
-                                  color: AppTheme.lightBlue,
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: const Border(
-                                    left: BorderSide(
-                                      color: AppTheme.primaryBlue,
-                                      width: 3,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                ),
-                if (message.sources.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  _buildSources(),
-                ],
-                const SizedBox(height: 2),
-                Text(
-                  _formatTime(message.timestamp),
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AppTheme.textGray.withOpacity(0.7),
-                  ),
-                ),
-              ],
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      child: isUser ? _buildUserMessage() : _buildAiMessage(context),
+    );
+  }
+
+  // ─── Mensaje del usuario ──────────────────────────────────────────────────
+  Widget _buildUserMessage() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Flexible(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 520),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryBlue,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(18),
+                topRight: Radius.circular(18),
+                bottomLeft: Radius.circular(18),
+                bottomRight: Radius.circular(4),
+              ),
+            ),
+            child: Text(
+              message.content,
+              style: const TextStyle(color: Colors.white, fontSize: 14.5, height: 1.5),
             ),
           ),
-          const SizedBox(width: 8),
-          if (isUser) _buildUserAvatar(context),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _buildAvatar() {
-    return Container(
-      width: 34,
-      height: 34,
-      decoration: BoxDecoration(
-        color: AppTheme.primaryBlue,
-        shape: BoxShape.circle,
-        border: Border.all(color: AppTheme.accentGold, width: 1.5),
-      ),
-      child: const Center(
-        child: Text(
-          'IA',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
+  // ─── Mensaje de la IA ────────────────────────────────────────────────────
+  Widget _buildAiMessage(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Avatar IA
+        Container(
+          width: 32,
+          height: 32,
+          margin: const EdgeInsets.only(right: 10, top: 2),
+          decoration: BoxDecoration(
+            color: AppTheme.primaryBlue,
+            shape: BoxShape.circle,
+            border: Border.all(color: AppTheme.accentGold, width: 1.5),
+          ),
+          child: const Center(
+            child: Text('IA',
+                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildUserAvatar(BuildContext context) {
-    return Container(
-      width: 34,
-      height: 34,
-      decoration: const BoxDecoration(
-        color: AppTheme.secondaryBlue,
-        shape: BoxShape.circle,
-      ),
-      child: const Icon(Icons.person, color: Colors.white, size: 20),
-    );
-  }
-
-  Widget _buildTypingIndicator() {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _Dot(delay: 0),
-        const SizedBox(width: 4),
-        _Dot(delay: 200),
-        const SizedBox(width: 4),
-        _Dot(delay: 400),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Burbuja
+              Container(
+                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(4),
+                    topRight: Radius.circular(18),
+                    bottomLeft: Radius.circular(18),
+                    bottomRight: Radius.circular(18),
+                  ),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2)),
+                  ],
+                ),
+                child: message.isLoading
+                    ? _buildTyping()
+                    : MarkdownBody(
+                        data: message.content,
+                        styleSheet: MarkdownStyleSheet(
+                          p: const TextStyle(color: AppTheme.textDark, fontSize: 14.5, height: 1.6),
+                          strong: const TextStyle(color: AppTheme.primaryBlue, fontWeight: FontWeight.bold),
+                          code: const TextStyle(
+                            backgroundColor: Color(0xFFF0F4F9),
+                            fontFamily: 'monospace',
+                            fontSize: 13,
+                          ),
+                          codeblockDecoration: BoxDecoration(
+                            color: const Color(0xFFF0F4F9),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          blockquoteDecoration: BoxDecoration(
+                            color: AppTheme.lightBlue,
+                            borderRadius: BorderRadius.circular(4),
+                            border: const Border(left: BorderSide(color: AppTheme.primaryBlue, width: 3)),
+                          ),
+                          listBullet: const TextStyle(color: AppTheme.primaryBlue),
+                          h2: const TextStyle(
+                              color: AppTheme.textDark, fontWeight: FontWeight.w700, fontSize: 16),
+                          h3: const TextStyle(
+                              color: AppTheme.textDark, fontWeight: FontWeight.w600, fontSize: 15),
+                        ),
+                      ),
+              ),
+              // Fuentes citadas
+              if (message.sources.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                _buildSources(),
+              ],
+              const SizedBox(height: 2),
+              Text(
+                _formatTime(message.timestamp),
+                style: const TextStyle(fontSize: 10, color: AppTheme.textGray),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
 
   Widget _buildSources() {
     return Wrap(
-      spacing: 4,
-      children: message.sources
-          .take(3)
-          .map(
-            (s) => Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppTheme.lightBlue,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                    color: AppTheme.primaryBlue.withOpacity(0.3), width: 1),
-              ),
-              child: Text(
-                s,
-                style: const TextStyle(
-                  fontSize: 10,
-                  color: AppTheme.primaryBlue,
-                ),
-              ),
-            ),
-          )
-          .toList(),
+      spacing: 6,
+      runSpacing: 4,
+      children: [
+        const Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.menu_book, size: 12, color: AppTheme.textGray),
+          SizedBox(width: 3),
+          Text('Fuentes:', style: TextStyle(fontSize: 11, color: AppTheme.textGray)),
+        ]),
+        ...message.sources.take(4).map((s) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: AppTheme.lightBlue,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppTheme.primaryBlue.withOpacity(0.25)),
+          ),
+          child: Text(s,
+              style: const TextStyle(fontSize: 11, color: AppTheme.primaryBlue),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+        )),
+      ],
     );
   }
 
-  String _formatTime(DateTime dt) {
-    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  Widget _buildTyping() {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      _Dot(delay: 0), const SizedBox(width: 4),
+      _Dot(delay: 180), const SizedBox(width: 4),
+      _Dot(delay: 360),
+    ]);
   }
+
+  String _formatTime(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 }
 
 class _Dot extends StatefulWidget {
   final int delay;
   const _Dot({required this.delay});
-
   @override
   State<_Dot> createState() => _DotState();
 }
 
 class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-    _animation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+    _ctrl = AnimationController(duration: const Duration(milliseconds: 500), vsync: this);
+    _anim = Tween<double>(begin: 0, end: 1)
+        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
     Future.delayed(Duration(milliseconds: widget.delay), () {
-      if (mounted) _controller.repeat(reverse: true);
+      if (mounted) _ctrl.repeat(reverse: true);
     });
   }
 
   @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
+  void dispose() { _ctrl.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: _animation,
+      animation: _anim,
       builder: (_, __) => Container(
-        width: 8,
-        height: 8,
+        width: 7, height: 7,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: AppTheme.textGray.withOpacity(0.4 + 0.6 * _animation.value),
+          color: AppTheme.primaryBlue.withOpacity(0.3 + 0.7 * _anim.value),
         ),
       ),
     );

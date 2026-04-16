@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/app_config.dart';
 import '../models/message_model.dart';
 import '../screens/admin_screen.dart';
+import '../services/admin_service.dart';
 import '../services/auth_service.dart';
 import '../services/chat_service.dart';
 import '../services/firestore_service.dart';
@@ -22,21 +23,34 @@ class _ChatScreenState extends State<ChatScreen> {
   final AuthService _authService = AuthService();
   final ChatService _chatService = ChatService();
   final FirestoreService _firestoreService = FirestoreService();
+  final AdminService _adminService = AdminService();
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
+  List<DocumentInfo> _sources = [];
 
   bool _isLoading = false;
   bool _serverConnected = false;
   bool _historyLoaded = false;
+  bool _sourcesExpanded = true;
 
   bool get _isAdmin => widget.role == 'admin';
+
+  static const List<String> _suggestedQuestions = [
+    '¿Cuáles son los tipos de procedimientos de selección?',
+    '¿Qué es el SEACE y cómo funciona?',
+    '¿Cuáles son los requisitos para ser proveedor del Estado?',
+    '¿Qué dice la Ley N° 30225 sobre contrataciones directas?',
+    '¿Cómo se calcula el valor referencial en una licitación?',
+    '¿Cuáles son las causales de descalificación de un postor?',
+  ];
 
   @override
   void initState() {
     super.initState();
     _checkServer();
     _loadHistory();
+    _loadSources();
   }
 
   @override
@@ -46,19 +60,21 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  Future<void> _loadSources() async {
+    try {
+      final docs = await _adminService.listDocuments();
+      if (mounted) setState(() => _sources = docs);
+    } catch (_) {}
+  }
+
   Future<void> _loadHistory() async {
     final uid = _authService.userId;
     final history = await _firestoreService.loadHistory(uid);
-
     setState(() {
       _historyLoaded = true;
-      if (history.isEmpty) {
-        _addWelcomeMessage();
-      } else {
-        _messages.addAll(history);
-      }
+      if (history.isEmpty) _addWelcomeMessage();
+      else _messages.addAll(history);
     });
-
     _scrollToBottom();
   }
 
@@ -66,15 +82,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _messages.add(ChatMessage(
       id: 'welcome_${DateTime.now().millisecondsSinceEpoch}',
       content:
-          '¡Bienvenido/a al **Asistente IA de Contrataciones OECE**!\n\n'
-          'Soy tu asistente especializado en **contrataciones públicas del Estado peruano**. '
-          'Puedo ayudarte con:\n\n'
-          '- Normativas y leyes de contrataciones\n'
-          '- Procesos de selección y licitaciones\n'
-          '- Documentos del SEACE\n'
-          '- Requisitos para proveedores del Estado\n'
-          '- Consultas sobre la Ley N° 30225 y su reglamento\n\n'
-          '¿En qué puedo ayudarte hoy?',
+          'Hola, soy **OECE-IA**, tu asistente especializado en contrataciones públicas del Estado peruano.\n\n'
+          'Puedo ayudarte a entender normativas, procesos de selección, requisitos del SEACE y más. '
+          'Selecciona una pregunta sugerida o escribe tu consulta.',
       role: MessageRole.assistant,
       timestamp: DateTime.now(),
     ));
@@ -97,21 +107,19 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Future<void> _sendMessage() async {
-    final text = _inputController.text.trim();
-    if (text.isEmpty || _isLoading) return;
-
+  Future<void> _sendMessage([String? text]) async {
+    final msg = (text ?? _inputController.text).trim();
+    if (msg.isEmpty || _isLoading) return;
     _inputController.clear();
     final uid = _authService.userId;
 
-    final userMessage = ChatMessage(
+    final userMsg = ChatMessage(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
-      content: text,
+      content: msg,
       role: MessageRole.user,
       timestamp: DateTime.now(),
     );
-
-    final loadingMessage = ChatMessage(
+    final loadingMsg = ChatMessage(
       id: 'loading_${DateTime.now().millisecondsSinceEpoch}',
       content: '',
       role: MessageRole.assistant,
@@ -120,57 +128,47 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     setState(() {
-      _messages.add(userMessage);
-      _messages.add(loadingMessage);
+      _messages.add(userMsg);
+      _messages.add(loadingMsg);
       _isLoading = true;
     });
     _scrollToBottom();
-
-    // Guardar mensaje del usuario en Firestore
-    await _firestoreService.saveMessage(uid, userMessage);
+    await _firestoreService.saveMessage(uid, userMsg);
 
     try {
-      final historyForApi = _messages
+      final history = _messages
           .where((m) => !m.isLoading && !m.id.startsWith('welcome'))
           .toList();
-
       final response = await _chatService.sendMessage(
-        message: text,
+        message: msg,
         userId: uid,
-        history: historyForApi,
+        history: history,
       );
-
-      final aiMessage = ChatMessage(
+      final aiMsg = ChatMessage(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         content: response.response,
         role: MessageRole.assistant,
         timestamp: DateTime.now(),
         sources: response.sources,
       );
-
       setState(() {
-        _messages.remove(loadingMessage);
-        _messages.add(aiMessage);
+        _messages.remove(loadingMsg);
+        _messages.add(aiMsg);
         _isLoading = false;
         _serverConnected = true;
       });
-
-      // Guardar respuesta de la IA en Firestore
-      await _firestoreService.saveMessage(uid, aiMessage);
+      await _firestoreService.saveMessage(uid, aiMsg);
+      if (response.sources.isNotEmpty) _loadSources();
     } catch (e) {
-      final errorMessage = ChatMessage(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        content:
-            'Lo siento, ocurrió un error al procesar tu consulta.\n\n'
-            '**Error:** ${e.toString().replaceFirst('Exception: ', '')}\n\n'
-            'Por favor verifica que el servidor esté activo o contáctanos por WhatsApp.',
-        role: MessageRole.assistant,
-        timestamp: DateTime.now(),
-      );
-
       setState(() {
-        _messages.remove(loadingMessage);
-        _messages.add(errorMessage);
+        _messages.remove(loadingMsg);
+        _messages.add(ChatMessage(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          content:
+              '**Error al conectar con el servidor.**\n\n${e.toString().replaceFirst('Exception: ', '')}\n\nVerifica que el servidor esté activo.',
+          role: MessageRole.assistant,
+          timestamp: DateTime.now(),
+        ));
         _isLoading = false;
         _serverConnected = false;
       });
@@ -179,375 +177,401 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _openWhatsApp() async {
-    final message = Uri.encodeComponent(AppConfig.whatsappMessage);
-    final url = 'https://wa.me/${AppConfig.whatsappNumber}?text=$message';
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No se pudo abrir WhatsApp'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    }
+    final msg = Uri.encodeComponent(AppConfig.whatsappMessage);
+    final uri = Uri.parse('https://wa.me/${AppConfig.whatsappNumber}?text=$msg');
+    if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   Future<void> _clearChat() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Limpiar chat'),
-        content: const Text(
-            '¿Borrar todo el historial? Esta acción no se puede deshacer.'),
+        title: const Text('Limpiar historial'),
+        content: const Text('¿Borrar todas las conversaciones?'),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancelar')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Borrar todo'),
+            child: const Text('Borrar'),
           ),
         ],
       ),
     );
-
     if (confirm == true) {
       await _firestoreService.clearHistory(_authService.userId);
-      setState(() {
-        _messages.clear();
-        _addWelcomeMessage();
-      });
+      setState(() { _messages.clear(); _addWelcomeMessage(); });
     }
   }
 
   Future<void> _signOut() async {
     if (AppConfig.demoMode) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Modo demo activo — login desactivado. Cambia demoMode a false en app_config.dart.'),
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 4),
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Modo demo — cambia demoMode a false en app_config.dart para activar login.'),
+        behavior: SnackBarBehavior.floating,
+      ));
       return;
     }
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cerrar sesión'),
-        content: const Text('¿Estás seguro de que deseas cerrar sesión?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancelar')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Salir'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      await _authService.signOut();
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
-        );
-      }
-    }
+    await _authService.signOut();
+    if (mounted) Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const LoginScreen()));
   }
 
   @override
   Widget build(BuildContext context) {
+    final isWide = MediaQuery.of(context).size.width > 800;
     return Scaffold(
-      appBar: _buildAppBar(),
+      backgroundColor: const Color(0xFFF0F4F9),
       body: Column(
         children: [
-          _buildServerStatus(),
+          _buildTopBar(),
+          if (!_serverConnected) _buildServerBanner(),
           Expanded(
-            child: !_historyLoaded
-                ? const Center(
-                    child: CircularProgressIndicator(
-                        color: AppTheme.primaryBlue))
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    itemCount: _messages.length,
-                    itemBuilder: (_, i) => ChatBubble(message: _messages[i]),
-                  ),
+            child: isWide
+                ? Row(children: [
+                    _buildSourcesPanel(),
+                    Expanded(child: _buildChatArea()),
+                  ])
+                : _buildChatArea(),
           ),
-          _buildInputBar(),
         ],
-      ),
-      floatingActionButton: FloatingActionButton.small(
-        onPressed: _openWhatsApp,
-        backgroundColor: const Color(0xFF25D366),
-        tooltip: 'Soporte WhatsApp',
-        child: const Icon(Icons.support_agent, color: Colors.white),
       ),
     );
   }
 
-  AppBar _buildAppBar() {
-    return AppBar(
-      backgroundColor: AppTheme.primaryBlue,
-      title: Row(
+  // ─── Top Bar (estilo NotebookLM) ──────────────────────────────────────────
+
+  Widget _buildTopBar() {
+    return Container(
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+      ),
+      child: Row(
         children: [
           Container(
-            width: 36,
-            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              border: Border.all(color: AppTheme.accentGold, width: 1.5),
+              color: AppTheme.primaryBlue,
+              borderRadius: BorderRadius.circular(8),
             ),
-            child: const Center(
-              child: Icon(Icons.account_balance,
-                  color: AppTheme.primaryBlue, size: 20),
+            child: const Text(
+              'OECE-IA',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14, letterSpacing: 1),
             ),
           ),
           const SizedBox(width: 10),
-          const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('OECE-IA',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1)),
-              Text('Asistente de Contrataciones',
-                  style: TextStyle(color: Colors.white70, fontSize: 11)),
-            ],
-          ),
-        ],
-      ),
-      actions: [
-        // Badge admin
-        if (_isAdmin)
-          Container(
-            margin: const EdgeInsets.symmetric(vertical: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(
-              color: AppTheme.accentGold.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                  color: AppTheme.accentGold.withOpacity(0.6), width: 1),
-            ),
-            child: const Text('Admin',
-                style: TextStyle(
-                    color: AppTheme.accentGold,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold)),
-          ),
-        // Panel Admin
-        if (_isAdmin)
+          const Text('Asistente de Contrataciones Públicas',
+              style: TextStyle(color: AppTheme.textGray, fontSize: 13)),
+          const Spacer(),
+          // WhatsApp
           IconButton(
-            icon: const Icon(Icons.admin_panel_settings,
-                color: AppTheme.accentGold),
-            tooltip: 'Panel de administración',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AdminScreen()),
-            ),
+            icon: const Icon(Icons.support_agent, color: Color(0xFF25D366), size: 22),
+            tooltip: 'Soporte WhatsApp',
+            onPressed: _openWhatsApp,
           ),
-        // WhatsApp
-        IconButton(
-          icon: const Icon(Icons.support_agent, color: Color(0xFF25D366)),
-          tooltip: 'Soporte WhatsApp',
-          onPressed: _openWhatsApp,
-        ),
-        // Menú
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert, color: Colors.white),
-          onSelected: (value) {
-            if (value == 'logout') _signOut();
-            if (value == 'clear') _clearChat();
-            if (value == 'admin') {
-              Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const AdminScreen()));
-            }
-          },
-          itemBuilder: (_) => [
-            PopupMenuItem(
-              value: 'profile',
-              enabled: false,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(_authService.userDisplayName,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 14)),
-                  Text(_authService.userEmail ?? '',
-                      style: const TextStyle(
-                          color: AppTheme.textGray, fontSize: 12)),
-                  if (_isAdmin)
-                    Container(
-                      margin: const EdgeInsets.only(top: 4),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: AppTheme.accentGold.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text('Administrador',
-                          style: TextStyle(
-                              color: AppTheme.accentGold,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                ],
+          // Admin
+          if (_isAdmin)
+            IconButton(
+              icon: const Icon(Icons.tune, color: AppTheme.primaryBlue, size: 22),
+              tooltip: 'Panel admin',
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminScreen())),
+            ),
+          // Avatar menu
+          PopupMenuButton<String>(
+            onSelected: (v) {
+              if (v == 'logout') _signOut();
+              if (v == 'clear') _clearChat();
+              if (v == 'admin') Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminScreen()));
+            },
+            child: CircleAvatar(
+              radius: 16,
+              backgroundColor: AppTheme.primaryBlue,
+              child: Text(
+                _authService.userDisplayName.isNotEmpty ? _authService.userDisplayName[0].toUpperCase() : 'U',
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
               ),
             ),
-            const PopupMenuDivider(),
-            if (_isAdmin)
-              const PopupMenuItem(
-                value: 'admin',
-                child: Row(children: [
-                  Icon(Icons.admin_panel_settings,
-                      size: 18, color: AppTheme.accentGold),
-                  SizedBox(width: 8),
-                  Text('Panel de administración'),
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'profile',
+                enabled: false,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(_authService.userDisplayName,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  Text(_authService.userEmail ?? '',
+                      style: const TextStyle(color: AppTheme.textGray, fontSize: 12)),
                 ]),
               ),
-            const PopupMenuItem(
-              value: 'clear',
-              child: Row(children: [
-                Icon(Icons.delete_outline, size: 18, color: AppTheme.textGray),
-                SizedBox(width: 8),
-                Text('Limpiar historial'),
-              ]),
-            ),
-            const PopupMenuItem(
-              value: 'logout',
-              child: Row(children: [
-                Icon(Icons.logout, size: 18, color: Colors.red),
-                SizedBox(width: 8),
-                Text('Cerrar sesión', style: TextStyle(color: Colors.red)),
-              ]),
-            ),
-          ],
-        ),
-      ],
+              const PopupMenuDivider(),
+              if (_isAdmin)
+                const PopupMenuItem(value: 'admin', child: Row(children: [
+                  Icon(Icons.tune, size: 16, color: AppTheme.accentGold),
+                  SizedBox(width: 8), Text('Panel admin'),
+                ])),
+              const PopupMenuItem(value: 'clear', child: Row(children: [
+                Icon(Icons.delete_outline, size: 16, color: AppTheme.textGray),
+                SizedBox(width: 8), Text('Limpiar historial'),
+              ])),
+              const PopupMenuItem(value: 'logout', child: Row(children: [
+                Icon(Icons.logout, size: 16, color: Colors.red),
+                SizedBox(width: 8), Text('Cerrar sesión', style: TextStyle(color: Colors.red)),
+              ])),
+            ],
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
     );
   }
 
-  Widget _buildServerStatus() {
-    if (_serverConnected) return const SizedBox.shrink();
+  // ─── Server banner ────────────────────────────────────────────────────────
+
+  Widget _buildServerBanner() {
     return Container(
       width: double.infinity,
       color: Colors.orange.shade50,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
+      child: Row(children: [
+        Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 16),
+        const SizedBox(width: 8),
+        Expanded(child: Text(
+          'Servidor desconectado. Ejecuta uvicorn main:app --reload en la carpeta server.',
+          style: TextStyle(color: Colors.orange.shade800, fontSize: 12),
+        )),
+        TextButton(
+          onPressed: _checkServer,
+          child: Text('Reintentar', style: TextStyle(color: Colors.orange.shade900, fontSize: 12, fontWeight: FontWeight.bold)),
+        ),
+      ]),
+    );
+  }
+
+  // ─── Panel de fuentes (izquierda) ─────────────────────────────────────────
+
+  Widget _buildSourcesPanel() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      width: _sourcesExpanded ? 260 : 52,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(right: BorderSide(color: Color(0xFFE5E7EB))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.warning_amber, color: Colors.orange.shade700, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'Servidor desconectado. Verifica que el servidor local esté activo.',
-              style:
-                  TextStyle(color: Colors.orange.shade800, fontSize: 12),
+          // Header
+          InkWell(
+            onTap: () => setState(() => _sourcesExpanded = !_sourcesExpanded),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+              child: Row(children: [
+                const Icon(Icons.folder_open, color: AppTheme.primaryBlue, size: 20),
+                if (_sourcesExpanded) ...[
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text('Fuentes OECE',
+                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppTheme.textDark)),
+                  ),
+                  Icon(Icons.chevron_left, color: AppTheme.textGray, size: 18),
+                ],
+              ]),
             ),
           ),
-          TextButton(
-            onPressed: _checkServer,
-            style: TextButton.styleFrom(padding: EdgeInsets.zero),
-            child: Text('Reintentar',
-                style: TextStyle(
-                    color: Colors.orange.shade900,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold)),
+          const Divider(height: 1),
+          if (_sourcesExpanded) ...[
+            Expanded(
+              child: _sources.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('Sin documentos cargados',
+                            style: TextStyle(color: AppTheme.textGray, fontSize: 12)),
+                        const SizedBox(height: 8),
+                        if (_isAdmin)
+                          GestureDetector(
+                            onTap: () => Navigator.push(context,
+                                MaterialPageRoute(builder: (_) => const AdminScreen())),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: AppTheme.lightBlue,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Row(children: [
+                                Icon(Icons.add, size: 14, color: AppTheme.primaryBlue),
+                                SizedBox(width: 4),
+                                Text('Subir documentos',
+                                    style: TextStyle(color: AppTheme.primaryBlue, fontSize: 12)),
+                              ]),
+                            ),
+                          ),
+                      ]),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: _sources.length,
+                      itemBuilder: (_, i) => _buildSourceTile(_sources[i]),
+                    ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                '${_sources.length} documento(s) · ${_sources.fold(0, (s, d) => s + d.chunks)} fragmentos',
+                style: const TextStyle(color: AppTheme.textGray, fontSize: 11),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSourceTile(DocumentInfo doc) {
+    final ext = doc.source.split('.').last.toUpperCase();
+    final color = ext == 'PDF' ? Colors.red.shade700 : ext == 'DOCX' ? Colors.blue.shade700 : Colors.green.shade700;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(ext, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.bold)),
+        ),
+        const SizedBox(width: 8),
+        Expanded(child: Text(
+          doc.source.replaceAll(RegExp(r'\.\w+$'), ''),
+          style: const TextStyle(fontSize: 12, color: AppTheme.textDark),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        )),
+      ]),
+    );
+  }
+
+  // ─── Área de chat (derecha) ───────────────────────────────────────────────
+
+  Widget _buildChatArea() {
+    return Column(
+      children: [
+        Expanded(
+          child: !_historyLoaded
+              ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryBlue))
+              : ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+                  itemCount: _messages.length + (_messages.length == 1 ? 1 : 0),
+                  itemBuilder: (_, i) {
+                    if (i == 1 && _messages.length == 1) return _buildSuggestedQuestions();
+                    return ChatBubble(message: _messages[i]);
+                  },
+                ),
+        ),
+        _buildInputArea(),
+      ],
+    );
+  }
+
+  // ─── Preguntas sugeridas (estilo NotebookLM) ──────────────────────────────
+
+  Widget _buildSuggestedQuestions() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 10),
+            child: Text('Preguntas sugeridas',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textGray)),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _suggestedQuestions
+                .map((q) => GestureDetector(
+                      onTap: () => _sendMessage(q),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xFFD1D5DB)),
+                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 4)],
+                        ),
+                        child: Text(q, style: const TextStyle(fontSize: 13, color: AppTheme.primaryBlue)),
+                      ),
+                    ))
+                .toList(),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildInputBar() {
+  // ─── Input bar ─────────────────────────────────────────────────────────────
+
+  Widget _buildInputArea() {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 10,
-              offset: const Offset(0, -2)),
-        ],
-      ),
       padding: EdgeInsets.only(
-        left: 16,
-        right: 8,
-        top: 12,
+        left: 16, right: 16, top: 12,
         bottom: MediaQuery.of(context).viewInsets.bottom + 12,
+      ),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Color(0xFFE5E7EB))),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
-            child: TextField(
-              controller: _inputController,
-              maxLines: 4,
-              minLines: 1,
-              textInputAction: TextInputAction.newline,
-              decoration: const InputDecoration(
-                hintText: 'Escribe tu consulta sobre contrataciones...',
-                hintStyle:
-                    TextStyle(color: AppTheme.textGray, fontSize: 14),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(20)),
-                  borderSide: BorderSide(color: Color(0xFFE5E7EB)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(20)),
-                  borderSide: BorderSide(color: Color(0xFFE5E7EB)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(20)),
-                  borderSide:
-                      BorderSide(color: AppTheme.primaryBlue, width: 1.5),
-                ),
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                filled: true,
-                fillColor: Color(0xFFF9FAFB),
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0F4F9),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
               ),
-              onSubmitted: (_) => _sendMessage(),
+              child: TextField(
+                controller: _inputController,
+                maxLines: 4,
+                minLines: 1,
+                decoration: const InputDecoration(
+                  hintText: 'Consulta sobre contrataciones públicas...',
+                  hintStyle: TextStyle(color: AppTheme.textGray, fontSize: 14),
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                ),
+                onSubmitted: (_) => _sendMessage(),
+              ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           GestureDetector(
-            onTap: _sendMessage,
+            onTap: () => _sendMessage(),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              width: 46,
-              height: 46,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
-                color: _isLoading
-                    ? AppTheme.textGray
-                    : AppTheme.primaryBlue,
+                color: _isLoading ? AppTheme.textGray : AppTheme.primaryBlue,
                 shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                      color: AppTheme.primaryBlue.withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3)),
-                ],
               ),
               child: _isLoading
                   ? const Padding(
                       padding: EdgeInsets.all(12),
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
-                    )
-                  : const Icon(Icons.send_rounded,
-                      color: Colors.white, size: 22),
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 22),
             ),
           ),
         ],
