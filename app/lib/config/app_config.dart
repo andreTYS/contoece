@@ -2,7 +2,7 @@ class AppConfig {
   // ── MODO DEMO ──────────────────────────────────────────────────────────────
   // true  → salta Firebase/login, entra directo al chat (para ver el diseño)
   // false → flujo real con Google Sign-In y Firestore
-  static const bool demoMode = false;
+  static const bool demoMode = true; // Cambiar a false cuando configures Firebase
 
   // URL del servidor local (cambiar a dominio cuando se despliegue)
   static const String serverUrl = 'http://localhost:8000';
@@ -23,6 +23,12 @@ class AppConfig {
   static const String adminDocumentsEndpoint = '/admin/documents';
   static const String adminUploadEndpoint = '/admin/upload';
   static const String adminDeleteEndpoint = '/admin/document';
+
+  // Google Sign-In Web Client ID
+  // Obtén el tuyo en: https://console.firebase.google.com
+  // Proyecto → Authentication → Sign-in method → Google → Web SDK configuration
+  static const String googleWebClientId =
+      'TU_CLIENT_ID.apps.googleusercontent.com';
 
   // Correos que reciben rol admin automáticamente al primer login
   // Agrega aquí los correos de los administradores

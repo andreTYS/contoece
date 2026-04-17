@@ -10,8 +10,13 @@ class AuthService {
 
   FirebaseAuth? get _auth =>
       AppConfig.demoMode ? null : FirebaseAuth.instance;
-  GoogleSignIn? get _googleSignIn =>
-      AppConfig.demoMode ? null : GoogleSignIn();
+  GoogleSignIn? get _googleSignIn => AppConfig.demoMode
+      ? null
+      : GoogleSignIn(
+          clientId: AppConfig.googleWebClientId == 'TU_CLIENT_ID.apps.googleusercontent.com'
+              ? null
+              : AppConfig.googleWebClientId,
+        );
 
   Future<UserCredential?> signInWithGoogle() async {
     if (AppConfig.demoMode) return null;
