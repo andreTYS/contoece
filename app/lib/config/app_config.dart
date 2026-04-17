@@ -16,12 +16,17 @@ class AppConfig {
   static const String appSubtitle = 'Asistente de Contrataciones';
   static const String appVersion = '1.0.0';
 
-  // Endpoints
+  // Endpoints admin
   static const String chatEndpoint = '/chat';
   static const String healthEndpoint = '/health';
   static const String adminDocumentsEndpoint = '/admin/documents';
   static const String adminUploadEndpoint = '/admin/upload';
   static const String adminDeleteEndpoint = '/admin/document';
+
+  // Endpoints usuario
+  static const String userDocumentsEndpoint = '/user/documents';
+  static const String userUploadEndpoint = '/user/upload';
+  static const String userDeleteEndpoint = '/user/document';
 
   // Google Sign-In Web Client ID
   // Obtén el tuyo en: https://console.firebase.google.com

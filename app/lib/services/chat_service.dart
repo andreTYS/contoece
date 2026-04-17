@@ -17,6 +17,7 @@ class ChatService {
     required String message,
     required String userId,
     required List<ChatMessage> history,
+    String caseId = '',
   }) async {
     try {
       final historyJson = history
@@ -27,12 +28,11 @@ class ChatService {
       final response = await http
           .post(
             Uri.parse('$_baseUrl${AppConfig.chatEndpoint}'),
-            headers: {
-              'Content-Type': 'application/json; charset=utf-8',
-            },
+            headers: {'Content-Type': 'application/json; charset=utf-8'},
             body: jsonEncode({
               'message': message,
               'user_id': userId,
+              'case_id': caseId,
               'conversation_history': historyJson,
             }),
           )
