@@ -1,0 +1,21 @@
+services:
+  oece-server:
+    build: ./server
+    container_name: oece-ia-server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - oece_chroma:/app/chroma_db
+      - oece_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  oece_chroma:
+  oece_data:
