@@ -4,7 +4,7 @@ class AppConfig {
   // false → flujo real con Google Sign-In y Firestore
   static const bool demoMode = false;
 
-  static const String serverUrl = 'http://76.13.234.161:8000';
+  static const String serverUrl = 'https://oece.masredespro.com';
 
   // WhatsApp soporte
   static const String whatsappNumber = '51910561256';

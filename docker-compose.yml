@@ -3,8 +3,6 @@ services:
     build: ./server
     container_name: oece-ia-server
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     volumes:
@@ -15,6 +13,33 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.oece-api.rule=Host(`oece.masredespro.com`)"
+      - "traefik.http.routers.oece-api.entrypoints=websecure"
+      - "traefik.http.routers.oece-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.oece-api.loadbalancer.server.port=8000"
+    networks:
+      - web
+
+  oece-web:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.web
+    container_name: oece-ia-web
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.oece-web.rule=Host(`masredespro.com`) || Host(`www.masredespro.com`)"
+      - "traefik.http.routers.oece-web.entrypoints=websecure"
+      - "traefik.http.routers.oece-web.tls.certresolver=letsencrypt"
+      - "traefik.http.services.oece-web.loadbalancer.server.port=80"
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
 
 volumes:
   oece_chroma:
