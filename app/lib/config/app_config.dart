@@ -4,9 +4,7 @@ class AppConfig {
   // false → flujo real con Google Sign-In y Firestore
   static const bool demoMode = false;
 
-  // URL del servidor — cambia por la IP o dominio de tu VPS
-  // Ejemplo: 'http://123.456.789.0:8000' o 'https://api.tudominio.com'
-  static const String serverUrl = 'http://TU_IP_VPS:8000';
+  static const String serverUrl = 'http://76.13.234.161:8000';
 
   // WhatsApp soporte
   static const String whatsappNumber = '51910561256';
