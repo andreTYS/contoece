@@ -24,12 +24,20 @@ services:
     restart: unless-stopped
     depends_on:
       - oece-server
+    volumes:
+      - /var/www/certbot:/var/www/certbot:ro
     labels:
       - "traefik.enable=true"
+      # HTTPS router — uses cert provided by Traefik file provider
       - "traefik.http.routers.oece-web.rule=Host(`oece.masredespro.com`)"
       - "traefik.http.routers.oece-web.entrypoints=websecure"
-      - "traefik.http.routers.oece-web.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.oece-web.tls=true"
       - "traefik.http.services.oece-web.loadbalancer.server.port=80"
+      # HTTP router — serves certbot ACME challenge (bypasses global HTTP→HTTPS redirect)
+      - "traefik.http.routers.oece-acme.rule=Host(`oece.masredespro.com`) && PathPrefix(`/.well-known/acme-challenge/`)"
+      - "traefik.http.routers.oece-acme.entrypoints=web"
+      - "traefik.http.routers.oece-acme.service=oece-web"
+      - "traefik.http.routers.oece-acme.priority=1000"
     networks:
       - n8n_default
       - internal
