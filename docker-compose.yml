@@ -13,14 +13,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.oece-api.rule=Host(`oece.masredespro.com`)"
-      - "traefik.http.routers.oece-api.entrypoints=websecure"
-      - "traefik.http.routers.oece-api.tls.certresolver=letsencrypt"
-      - "traefik.http.services.oece-api.loadbalancer.server.port=8000"
     networks:
-      - web
+      - internal
 
   oece-web:
     build:
@@ -28,18 +22,23 @@ services:
       dockerfile: Dockerfile.web
     container_name: oece-ia-web
     restart: unless-stopped
+    depends_on:
+      - oece-server
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.oece-web.rule=Host(`masredespro.com`) || Host(`www.masredespro.com`)"
+      - "traefik.http.routers.oece-web.rule=Host(`oece.masredespro.com`)"
       - "traefik.http.routers.oece-web.entrypoints=websecure"
       - "traefik.http.routers.oece-web.tls.certresolver=letsencrypt"
       - "traefik.http.services.oece-web.loadbalancer.server.port=80"
     networks:
       - web
+      - internal
 
 networks:
   web:
     external: true
+  internal:
+    driver: bridge
 
 volumes:
   oece_chroma:
