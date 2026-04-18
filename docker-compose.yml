@@ -28,7 +28,7 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.oece-web.rule=Host(`oece.masredespro.com`)"
       - "traefik.http.routers.oece-web.entrypoints=websecure"
-      - "traefik.http.routers.oece-web.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.oece-web.tls.certresolver=mytlschallenge"
       - "traefik.http.services.oece-web.loadbalancer.server.port=80"
     networks:
       - n8n_default
