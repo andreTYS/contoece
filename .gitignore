@@ -1,3 +1,6 @@
+# Variables de entorno (nunca al repositorio)
+.env
+
 # Servidor Python
 server/venv/
 server/chroma_db/
