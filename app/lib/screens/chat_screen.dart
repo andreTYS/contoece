@@ -137,7 +137,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _isLoading = true;
     });
     _scrollToBottom();
-    await _firestoreService.saveMessage(uid, userMsg);
+    try { await _firestoreService.saveMessage(uid, userMsg); } catch (_) {}
 
     try {
       final history = _messages
