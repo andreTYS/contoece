@@ -66,36 +66,23 @@ class AuthGate extends StatelessWidget {
   }
 }
 
-class _RoleGate extends StatefulWidget {
+class _RoleGate extends StatelessWidget {
   final User user;
   const _RoleGate({required this.user});
 
   @override
-  State<_RoleGate> createState() => _RoleGateState();
-}
-
-class _RoleGateState extends State<_RoleGate> {
-  final FirestoreService _firestoreService = FirestoreService();
-
-  @override
-  void initState() {
-    super.initState();
-    _firestoreService.ensureUserProfile(
-      uid: widget.user.uid,
-      email: widget.user.email ?? '',
-      displayName: widget.user.displayName ?? widget.user.email ?? 'Usuario',
-    );
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return StreamBuilder<String>(
-      stream: _firestoreService.userRoleStream(widget.user.uid),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const _LoadingScreen();
-        return ChatScreen(role: snapshot.data!);
-      },
+    final email = user.email ?? '';
+    final role = AppConfig.adminEmails.contains(email.toLowerCase())
+        ? 'admin'
+        : 'user';
+    // Guarda el perfil en Firestore en segundo plano (para panel de usuarios)
+    FirestoreService().ensureUserProfile(
+      uid: user.uid,
+      email: email,
+      displayName: user.displayName ?? email,
     );
+    return ChatScreen(role: role);
   }
 }
 
