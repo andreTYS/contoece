@@ -38,6 +38,8 @@ services:
       - "traefik.http.routers.oece-acme.entrypoints=web"
       - "traefik.http.routers.oece-acme.service=oece-web"
       - "traefik.http.routers.oece-acme.priority=1000"
+      # Indica a Traefik que use la red n8n_default para conectarse al contenedor
+      - "traefik.docker.network=n8n_default"
     networks:
       - n8n_default
       - internal
