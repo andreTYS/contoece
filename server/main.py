@@ -14,11 +14,13 @@ from pathlib import Path
 from typing import Optional
 
 import chromadb
-from anthropic import Anthropic
+import json
+from anthropic import AsyncAnthropic
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 load_dotenv()
@@ -77,7 +79,7 @@ Proporcionar información precisa, confiable y actualizada sobre el sistema de c
 """
 
 # ─── Estado global ────────────────────────────────────────────────────────────
-anthropic_client: Optional[Anthropic] = None
+anthropic_client: Optional[AsyncAnthropic] = None
 chroma_client_instance: Optional[chromadb.PersistentClient] = None
 chroma_main_collection: Optional[chromadb.Collection] = None
 embedding_fn: Optional[SentenceTransformerEmbeddingFunction] = None
@@ -89,7 +91,7 @@ async def lifespan(app: FastAPI):
     logger.info("Iniciando servidor OECE-IA...")
 
     if ANTHROPIC_API_KEY:
-        anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+        anthropic_client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         logger.info("Cliente Anthropic inicializado.")
 
     try:
@@ -360,7 +362,7 @@ async def chat(request: ChatRequest):
     messages.append({"role": "user", "content": user_content})
 
     try:
-        response = anthropic_client.messages.create(
+        response = await anthropic_client.messages.create(
             model=CLAUDE_MODEL, max_tokens=2048, system=SYSTEM_PROMPT, messages=messages,
         )
         answer = response.content[0].text
@@ -370,6 +372,63 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"Error al procesar: {str(e)}")
 
     return ChatResponse(response=answer, sources=sources, user_sources=user_sources, documents_found=documents_found)
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """Endpoint de streaming: devuelve tokens SSE conforme Claude los genera."""
+    if not anthropic_client:
+        raise HTTPException(status_code=503, detail="El servicio de IA no está configurado.")
+
+    context_text = ""
+    sources: list[str] = []
+    documents_found = 0
+
+    if chroma_main_collection and chroma_main_collection.count() > 0:
+        try:
+            results = chroma_main_collection.query(
+                query_texts=[request.message],
+                n_results=min(5, chroma_main_collection.count()),
+                include=["documents", "metadatas", "distances"],
+            )
+            docs = results.get("documents", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            distances = results.get("distances", [[]])[0]
+            relevant = [(doc, meta) for doc, meta, dist in zip(docs, metas, distances) if dist < 0.6]
+            if relevant:
+                documents_found = len(relevant)
+                context_text = "\n\n---\n**INFORMACION DE LA BASE DE CONOCIMIENTOS OECE:**\n"
+                for doc, meta in relevant:
+                    source = meta.get("source", "Documento OECE")
+                    page = meta.get("page", "")
+                    context_text += f"\n*Fuente: {source}{f', pag. {page}' if page else ''}*\n{doc}\n"
+                    label = f"{source}{f' (pag. {page})' if page else ''}"
+                    if label not in sources:
+                        sources.append(label)
+        except Exception as e:
+            logger.warning(f"Error RAG streaming: {e}")
+
+    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-12:]]
+    user_content = request.message + (context_text if context_text else "")
+    messages.append({"role": "user", "content": user_content})
+
+    async def generate():
+        try:
+            async with anthropic_client.messages.stream(
+                model=CLAUDE_MODEL,
+                max_tokens=2048,
+                system=SYSTEM_PROMPT,
+                messages=messages,
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield f"data: {json.dumps({'token': text}, ensure_ascii=False)}\n\n"
+            logger.info(f"Stream | user={request.user_id} | docs={documents_found}")
+            yield f"data: {json.dumps({'done': True, 'sources': sources, 'documents_found': documents_found})}\n\n"
+        except Exception as e:
+            logger.error(f"Error stream Claude: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.get("/stats")

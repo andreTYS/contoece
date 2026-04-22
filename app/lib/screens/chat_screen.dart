@@ -234,15 +234,21 @@ class _ChatScreenState extends State<ChatScreen> {
       role: MessageRole.user,
       timestamp: DateTime.now(),
     );
-    final loading = ChatMessage(
-      id: 'loading_${DateTime.now().millisecondsSinceEpoch}',
+
+    // Mensaje IA vacío que se irá llenando con los tokens del stream
+    final aiMsgId = 'ai_${DateTime.now().millisecondsSinceEpoch}';
+    final streamingMsg = ChatMessage(
+      id: aiMsgId,
       content: '',
       role: MessageRole.assistant,
       timestamp: DateTime.now(),
-      isLoading: true,
     );
 
-    setState(() { _messages.add(userMsg); _messages.add(loading); _isLoading = true; });
+    setState(() {
+      _messages.add(userMsg);
+      _messages.add(streamingMsg);
+      _isLoading = true;
+    });
     _scrollToBottom();
 
     if (cid != null && cid.isNotEmpty) {
@@ -253,36 +259,58 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final history = _messages
-          .where((m) => !m.isLoading && !m.id.startsWith('welcome'))
+          .where((m) => !m.isLoading && !m.id.startsWith('welcome') && m.id != aiMsgId)
           .toList();
-      final res = await _chatService.sendMessage(
+
+      await for (final chunk in _chatService.sendMessageStream(
         message: text,
         userId: uid,
         history: history,
         caseId: cid ?? '',
-      );
-      final aiMsg = ChatMessage(
-        id: '${DateTime.now().millisecondsSinceEpoch}',
-        content: res.response,
-        role: MessageRole.assistant,
-        timestamp: DateTime.now(),
-        sources: res.sources,
-      );
-      setState(() {
-        _messages.remove(loading);
-        _messages.add(aiMsg);
-        _isLoading = false;
-        _serverConnected = true;
-      });
-      if (cid != null && cid.isNotEmpty) {
-        try { await _firestoreService.saveCaseMessage(uid, cid, aiMsg); } catch (_) {}
-      } else {
-        try { await _firestoreService.saveMessage(uid, aiMsg); } catch (_) {}
+      )) {
+        if (chunk.token != null) {
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == aiMsgId);
+            if (idx >= 0) {
+              _messages[idx] = _messages[idx]
+                  .copyWith(content: _messages[idx].content + chunk.token!);
+            }
+          });
+        } else if (chunk.done) {
+          final sources = chunk.sources ?? [];
+          setState(() {
+            _isLoading = false;
+            _serverConnected = true;
+            final idx = _messages.indexWhere((m) => m.id == aiMsgId);
+            if (idx >= 0) {
+              _messages[idx] = _messages[idx].copyWith(sources: sources);
+            }
+          });
+          final finalMsg = _messages.firstWhere((m) => m.id == aiMsgId,
+              orElse: () => streamingMsg);
+          if (cid != null && cid.isNotEmpty) {
+            try { await _firestoreService.saveCaseMessage(uid, cid, finalMsg); } catch (_) {}
+          } else {
+            try { await _firestoreService.saveMessage(uid, finalMsg); } catch (_) {}
+          }
+          if (sources.isNotEmpty) _loadSources();
+        } else if (chunk.error != null) {
+          setState(() {
+            _messages.removeWhere((m) => m.id == aiMsgId);
+            _messages.add(ChatMessage(
+              id: '${DateTime.now().millisecondsSinceEpoch}',
+              content: '**Error al conectar con el servidor.**\n\n${chunk.error}',
+              role: MessageRole.assistant,
+              timestamp: DateTime.now(),
+            ));
+            _isLoading = false;
+            _serverConnected = false;
+          });
+        }
       }
-      if (res.sources.isNotEmpty) _loadSources();
     } catch (e) {
       setState(() {
-        _messages.remove(loading);
+        _messages.removeWhere((m) => m.id == aiMsgId);
         _messages.add(ChatMessage(
           id: '${DateTime.now().millisecondsSinceEpoch}',
           content: '**Error al conectar con el servidor.**\n\n'
