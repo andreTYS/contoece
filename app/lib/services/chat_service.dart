@@ -1,104 +1,62 @@
-import 'dart:async';
 import 'dart:convert';
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html;
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import '../models/message_model.dart';
 
+class ChatResponse {
+  final String response;
+  final List<String> sources;
+
+  ChatResponse({required this.response, this.sources = const []});
+}
+
 class ChatService {
   final String _baseUrl = AppConfig.serverUrl;
 
-  /// SSE streaming via XHR onProgress — tokens arrive in real-time.
-  Stream<Map<String, dynamic>> streamMessage({
+  Future<ChatResponse> sendMessage({
     required String message,
     required String userId,
     required List<ChatMessage> history,
     String caseId = '',
-  }) {
-    final controller = StreamController<Map<String, dynamic>>();
+  }) async {
+    try {
+      final historyJson = history
+          .where((m) => !m.isLoading)
+          .map((m) => m.toJson())
+          .toList();
 
-    final historyJson = history
-        .where((m) => !m.isLoading)
-        .map((m) => m.toJson())
-        .toList();
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl${AppConfig.chatEndpoint}'),
+            headers: {'Content-Type': 'application/json; charset=utf-8'},
+            body: jsonEncode({
+              'message': message,
+              'user_id': userId,
+              'case_id': caseId,
+              'conversation_history': historyJson,
+            }),
+          )
+          .timeout(const Duration(seconds: 120));
 
-    final body = jsonEncode({
-      'message': message,
-      'user_id': userId,
-      'case_id': caseId,
-      'conversation_history': historyJson,
-    });
-
-    final request = html.HttpRequest();
-    request.open('POST', '$_baseUrl/chat/stream');
-    request.setRequestHeader('Content-Type', 'application/json; charset=utf-8');
-    request.timeout = 120000;
-
-    var lastLength = 0;
-    var lineBuffer = '';
-
-    void processBuffer() {
-      while (lineBuffer.contains('\n\n')) {
-        final idx = lineBuffer.indexOf('\n\n');
-        final block = lineBuffer.substring(0, idx);
-        lineBuffer = lineBuffer.substring(idx + 2);
-        for (final line in block.split('\n')) {
-          if (line.startsWith('data: ')) {
-            try {
-              final data =
-                  jsonDecode(line.substring(6)) as Map<String, dynamic>;
-              if (!controller.isClosed) controller.add(data);
-            } catch (_) {}
-          }
-        }
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        final sources = (data['sources'] as List<dynamic>?)
+                ?.map((s) => s.toString())
+                .toList() ??
+            [];
+        return ChatResponse(response: data['response'], sources: sources);
+      } else {
+        final detail =
+            jsonDecode(utf8.decode(response.bodyBytes))['detail'] ??
+                'Error del servidor: ${response.statusCode}';
+        throw Exception(detail);
       }
+    } on http.ClientException {
+      throw Exception(
+          'No se pudo conectar al servidor. Verifica que el servidor esté activo.');
+    } catch (e) {
+      rethrow;
     }
-
-    request.onProgress.listen((_) {
-      if (controller.isClosed) return;
-      final text = request.responseText ?? '';
-      if (text.length <= lastLength) return;
-      lineBuffer += text.substring(lastLength);
-      lastLength = text.length;
-      processBuffer();
-    });
-
-    request.onLoad.listen((_) {
-      final text = request.responseText ?? '';
-      if (text.length > lastLength) {
-        lineBuffer += text.substring(lastLength);
-      }
-      for (final line in lineBuffer.split('\n')) {
-        if (line.startsWith('data: ')) {
-          try {
-            final data =
-                jsonDecode(line.substring(6)) as Map<String, dynamic>;
-            if (!controller.isClosed) controller.add(data);
-          } catch (_) {}
-        }
-      }
-      if (!controller.isClosed) controller.close();
-    });
-
-    request.onError.listen((_) {
-      if (!controller.isClosed) {
-        controller.addError(Exception(
-            'No se pudo conectar al servidor. Verifica que el servidor esté activo.'));
-        controller.close();
-      }
-    });
-
-    request.onTimeout.listen((_) {
-      if (!controller.isClosed) {
-        controller.addError(
-            Exception('Tiempo de espera agotado. El servidor tardó demasiado.'));
-        controller.close();
-      }
-    });
-
-    request.send(body);
-    return controller.stream;
   }
 
   Future<bool> checkServerHealth() async {

@@ -241,9 +241,8 @@ class _ChatScreenState extends State<ChatScreen> {
       role: MessageRole.user,
       timestamp: DateTime.now(),
     );
-    final loadingId = 'loading_${DateTime.now().millisecondsSinceEpoch + 1}';
     final loading = ChatMessage(
-      id: loadingId,
+      id: 'loading_${DateTime.now().millisecondsSinceEpoch}',
       content: '',
       role: MessageRole.assistant,
       timestamp: DateTime.now(),
@@ -263,71 +262,35 @@ class _ChatScreenState extends State<ChatScreen> {
       try { await _firestoreService.saveMessage(uid, userMsg); } catch (_) {}
     }
 
-    final responseBuffer = StringBuffer();
-    List<String> aiSources = [];
-
     try {
-      await for (final event in _chatService.streamMessage(
+      final res = await _chatService.sendMessage(
         message: text,
         userId: uid,
         history: history,
         caseId: cid ?? '',
-      )) {
-        if (!mounted) return;
-
-        if (event['token'] is String) {
-          responseBuffer.write(event['token'] as String);
-          final partial = responseBuffer.toString();
-          setState(() {
-            final idx = _messages.indexWhere((m) => m.id == loadingId);
-            if (idx != -1) {
-              _messages[idx] = _messages[idx].copyWith(
-                content: partial,
-                isLoading: false,
-              );
-            }
-          });
-          _scrollToBottom();
-        } else if (event['done'] == true) {
-          aiSources = (event['sources'] as List?)
-              ?.map((s) => s.toString())
-              .toList() ?? [];
-        } else if (event['error'] is String) {
-          throw Exception(event['error'] as String);
-        }
-      }
-
-      if (!mounted) return;
-
+      );
       final aiMsg = ChatMessage(
-        id: 'ai_${DateTime.now().millisecondsSinceEpoch}',
-        content: responseBuffer.toString(),
+        id: '${DateTime.now().millisecondsSinceEpoch}',
+        content: res.response,
         role: MessageRole.assistant,
         timestamp: DateTime.now(),
-        sources: aiSources,
+        sources: res.sources,
       );
-
       setState(() {
-        final idx = _messages.indexWhere((m) => m.id == loadingId);
-        if (idx != -1) {
-          _messages[idx] = aiMsg;
-        } else {
-          _messages.add(aiMsg);
-        }
+        _messages.remove(loading);
+        _messages.add(aiMsg);
         _isLoading = false;
         _serverConnected = true;
       });
-
       if (cid != null && cid.isNotEmpty) {
         try { await _firestoreService.saveCaseMessage(uid, cid, aiMsg); } catch (_) {}
       } else {
         try { await _firestoreService.saveMessage(uid, aiMsg); } catch (_) {}
       }
-      if (aiSources.isNotEmpty) _loadSources();
+      if (res.sources.isNotEmpty) _loadSources();
     } catch (e) {
-      if (!mounted) return;
       setState(() {
-        _messages.removeWhere((m) => m.id == loadingId);
+        _messages.remove(loading);
         _messages.add(ChatMessage(
           id: '${DateTime.now().millisecondsSinceEpoch}',
           content: '**Error al conectar con el servidor.**\n\n'
