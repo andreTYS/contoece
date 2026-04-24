@@ -306,7 +306,7 @@ def _list_collection_docs(collection: chromadb.Collection, where: Optional[dict]
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     doc_count = chroma_main_collection.count() if chroma_main_collection else 0
-    return HealthResponse(status="ok", documents_in_db=doc_count, model=CLAUDE_MODEL)
+    return HealthResponse(status="ok", documents_in_db=doc_count, model=OLLAMA_MODEL)
 
 
 def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str], int]:
