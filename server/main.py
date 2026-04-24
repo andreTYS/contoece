@@ -1,6 +1,6 @@
 """
 OECE-IA - Servidor de IA para Contrataciones Públicas del Estado Peruano
-Desarrollado con FastAPI + Claude (Anthropic) + ChromaDB (RAG)
+Desarrollado con FastAPI + Ollama (LLM local) + ChromaDB (RAG)
 """
 
 import hashlib
@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Optional
 
 import chromadb
+import httpx
 import json
-from anthropic import AsyncAnthropic
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -28,15 +28,12 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("oece-ia")
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 150
-
-if not ANTHROPIC_API_KEY:
-    logger.warning("ANTHROPIC_API_KEY no configurada.")
 
 SYSTEM_PROMPT = """Eres **OECE-IA**, el asistente virtual oficial especializado en contrataciones públicas del Estado peruano, desarrollado para apoyar a funcionarios, servidores públicos y proveedores del Estado.
 
@@ -79,20 +76,37 @@ Proporcionar información precisa, confiable y actualizada sobre el sistema de c
 """
 
 # ─── Estado global ────────────────────────────────────────────────────────────
-anthropic_client: Optional[AsyncAnthropic] = None
 chroma_client_instance: Optional[chromadb.PersistentClient] = None
 chroma_main_collection: Optional[chromadb.Collection] = None
 embedding_fn: Optional[SentenceTransformerEmbeddingFunction] = None
 
 
+async def _pull_model():
+    """Descarga el modelo Ollama si no está disponible localmente."""
+    try:
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            logger.info(f"Descargando modelo Ollama: {OLLAMA_MODEL}...")
+            async with client.stream("POST", f"{OLLAMA_URL}/api/pull",
+                                     json={"name": OLLAMA_MODEL}) as resp:
+                async for line in resp.aiter_lines():
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            if data.get("status") == "success":
+                                logger.info(f"Modelo {OLLAMA_MODEL} listo.")
+                        except Exception:
+                            pass
+    except Exception as e:
+        logger.warning(f"No se pudo descargar el modelo: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global anthropic_client, chroma_client_instance, chroma_main_collection, embedding_fn
+    global chroma_client_instance, chroma_main_collection, embedding_fn
     logger.info("Iniciando servidor OECE-IA...")
 
-    if ANTHROPIC_API_KEY:
-        anthropic_client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-        logger.info("Cliente Anthropic inicializado.")
+    import asyncio
+    asyncio.create_task(_pull_model())
 
     try:
         chroma_client_instance = chromadb.PersistentClient(path=CHROMA_DB_PATH)
@@ -295,17 +309,13 @@ async def health_check():
     return HealthResponse(status="ok", documents_in_db=doc_count, model=CLAUDE_MODEL)
 
 
-@app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    if not anthropic_client:
-        raise HTTPException(status_code=503, detail="El servicio de IA no está configurado.")
-
+def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str], int]:
+    """Consulta ChromaDB y devuelve contexto, fuentes y conteo de documentos."""
     context_text = ""
     sources: list[str] = []
     user_sources: list[str] = []
     documents_found = 0
 
-    # ── Consulta colección principal (OECE) ───────────────────────────────────
     if chroma_main_collection and chroma_main_collection.count() > 0:
         try:
             results = chroma_main_collection.query(
@@ -328,9 +338,8 @@ async def chat(request: ChatRequest):
                     if label not in sources:
                         sources.append(label)
         except Exception as e:
-            logger.warning(f"Error en RAG principal: {e}")
+            logger.warning(f"Error RAG principal: {e}")
 
-    # ── Consulta colección del usuario ────────────────────────────────────────
     user_col = _get_user_collection(request.user_id)
     if user_col and user_col.count() > 0:
         try:
@@ -355,20 +364,34 @@ async def chat(request: ChatRequest):
                     if source not in user_sources:
                         user_sources.append(source)
         except Exception as e:
-            logger.warning(f"Error en RAG usuario: {e}")
+            logger.warning(f"Error RAG usuario: {e}")
+
+    return context_text, sources, user_sources, documents_found
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    context_text, sources, user_sources, documents_found = _build_rag_context(request)
 
     messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-12:]]
     user_content = request.message + (context_text if context_text else "")
     messages.append({"role": "user", "content": user_content})
 
     try:
-        response = await anthropic_client.messages.create(
-            model=CLAUDE_MODEL, max_tokens=2048, system=SYSTEM_PROMPT, messages=messages,
-        )
-        answer = response.content[0].text
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={
+                    "model": OLLAMA_MODEL,
+                    "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+                    "stream": False,
+                },
+            )
+            resp.raise_for_status()
+            answer = resp.json()["message"]["content"]
         logger.info(f"Chat | user={request.user_id} | case={request.case_id} | docs={documents_found}")
     except Exception as e:
-        logger.error(f"Error Claude: {e}")
+        logger.error(f"Error Ollama: {e}")
         raise HTTPException(status_code=500, detail=f"Error al procesar: {str(e)}")
 
     return ChatResponse(response=answer, sources=sources, user_sources=user_sources, documents_found=documents_found)
@@ -376,37 +399,8 @@ async def chat(request: ChatRequest):
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """Endpoint de streaming: devuelve tokens SSE conforme Claude los genera."""
-    if not anthropic_client:
-        raise HTTPException(status_code=503, detail="El servicio de IA no está configurado.")
-
-    context_text = ""
-    sources: list[str] = []
-    documents_found = 0
-
-    if chroma_main_collection and chroma_main_collection.count() > 0:
-        try:
-            results = chroma_main_collection.query(
-                query_texts=[request.message],
-                n_results=min(5, chroma_main_collection.count()),
-                include=["documents", "metadatas", "distances"],
-            )
-            docs = results.get("documents", [[]])[0]
-            metas = results.get("metadatas", [[]])[0]
-            distances = results.get("distances", [[]])[0]
-            relevant = [(doc, meta) for doc, meta, dist in zip(docs, metas, distances) if dist < 0.6]
-            if relevant:
-                documents_found = len(relevant)
-                context_text = "\n\n---\n**INFORMACION DE LA BASE DE CONOCIMIENTOS OECE:**\n"
-                for doc, meta in relevant:
-                    source = meta.get("source", "Documento OECE")
-                    page = meta.get("page", "")
-                    context_text += f"\n*Fuente: {source}{f', pag. {page}' if page else ''}*\n{doc}\n"
-                    label = f"{source}{f' (pag. {page})' if page else ''}"
-                    if label not in sources:
-                        sources.append(label)
-        except Exception as e:
-            logger.warning(f"Error RAG streaming: {e}")
+    """Endpoint SSE: devuelve tokens conforme Ollama los genera."""
+    context_text, sources, _, documents_found = _build_rag_context(request)
 
     messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-12:]]
     user_content = request.message + (context_text if context_text else "")
@@ -414,18 +408,31 @@ async def chat_stream(request: ChatRequest):
 
     async def generate():
         try:
-            async with anthropic_client.messages.stream(
-                model=CLAUDE_MODEL,
-                max_tokens=2048,
-                system=SYSTEM_PROMPT,
-                messages=messages,
-            ) as stream:
-                async for text in stream.text_stream:
-                    yield f"data: {json.dumps({'token': text}, ensure_ascii=False)}\n\n"
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                async with client.stream(
+                    "POST",
+                    f"{OLLAMA_URL}/api/chat",
+                    json={
+                        "model": OLLAMA_MODEL,
+                        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+                        "stream": True,
+                    },
+                ) as resp:
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            token = data.get("message", {}).get("content", "")
+                            if token:
+                                yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
+                            if data.get("done"):
+                                yield f"data: {json.dumps({'done': True, 'sources': sources, 'documents_found': documents_found})}\n\n"
+                        except Exception:
+                            pass
             logger.info(f"Stream | user={request.user_id} | docs={documents_found}")
-            yield f"data: {json.dumps({'done': True, 'sources': sources, 'documents_found': documents_found})}\n\n"
         except Exception as e:
-            logger.error(f"Error stream Claude: {e}")
+            logger.error(f"Error stream Ollama: {e}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")

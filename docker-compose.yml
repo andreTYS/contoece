@@ -1,4 +1,13 @@
 services:
+  ollama:
+    image: ollama/ollama
+    container_name: oece-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - internal
+
   oece-server:
     build: ./server
     container_name: oece-ia-server
@@ -64,3 +73,4 @@ networks:
 volumes:
   oece_chroma:
   oece_data:
+  ollama_data:
