@@ -13,8 +13,20 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    labels:
+      - "traefik.enable=true"
+      # Traefik enruta /api/* directamente a FastAPI (evita nginx para la API)
+      - "traefik.http.routers.oece-api.rule=Host(`oece.masredespro.com`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.oece-api.entrypoints=websecure"
+      - "traefik.http.routers.oece-api.tls=true"
+      - "traefik.http.routers.oece-api.priority=10"
+      - "traefik.http.middlewares.oece-strip.stripprefix.prefixes=/api"
+      - "traefik.http.routers.oece-api.middlewares=oece-strip"
+      - "traefik.http.services.oece-api.loadbalancer.server.port=8000"
+      - "traefik.docker.network=n8n_default"
     networks:
       - internal
+      - n8n_default
 
   oece-web:
     build:
@@ -28,17 +40,16 @@ services:
       - /var/www/certbot:/var/www/certbot:ro
     labels:
       - "traefik.enable=true"
-      # HTTPS router — uses cert provided by Traefik file provider
+      # HTTPS router — sirve la app Flutter (archivos estáticos)
       - "traefik.http.routers.oece-web.rule=Host(`oece.masredespro.com`)"
       - "traefik.http.routers.oece-web.entrypoints=websecure"
       - "traefik.http.routers.oece-web.tls=true"
       - "traefik.http.services.oece-web.loadbalancer.server.port=80"
-      # HTTP router — serves certbot ACME challenge (bypasses global HTTP→HTTPS redirect)
+      # HTTP router — certbot ACME challenge
       - "traefik.http.routers.oece-acme.rule=Host(`oece.masredespro.com`) && PathPrefix(`/.well-known/acme-challenge/`)"
       - "traefik.http.routers.oece-acme.entrypoints=web"
       - "traefik.http.routers.oece-acme.service=oece-web"
       - "traefik.http.routers.oece-acme.priority=1000"
-      # Indica a Traefik que use la red n8n_default para conectarse al contenedor
       - "traefik.docker.network=n8n_default"
     networks:
       - n8n_default
