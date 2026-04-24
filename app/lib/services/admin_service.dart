@@ -59,9 +59,12 @@ class AdminService {
     if (res.statusCode == 200) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
-    final err =
-        jsonDecode(utf8.decode(res.bodyBytes))['detail'] ?? 'Error desconocido';
-    throw Exception(err);
+    String errMsg = 'Error del servidor (${res.statusCode})';
+    try {
+      final body = jsonDecode(utf8.decode(res.bodyBytes));
+      errMsg = body['detail'] ?? errMsg;
+    } catch (_) {}
+    throw Exception(errMsg);
   }
 
   /// Elimina un documento de la base vectorial

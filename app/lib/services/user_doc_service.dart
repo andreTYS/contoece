@@ -37,8 +37,12 @@ class UserDocService {
     if (res.statusCode == 200) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
-    final err = jsonDecode(utf8.decode(res.bodyBytes))['detail'] ?? 'Error al subir';
-    throw Exception(err);
+    String errMsg = 'Error del servidor (${res.statusCode})';
+    try {
+      final body = jsonDecode(utf8.decode(res.bodyBytes));
+      errMsg = body['detail'] ?? errMsg;
+    } catch (_) {}
+    throw Exception(errMsg);
   }
 
   Future<void> deleteDocument(String userId, String sourceName) async {
@@ -47,8 +51,12 @@ class UserDocService {
         .replace(queryParameters: {'user_id': userId});
     final res = await http.delete(uri).timeout(const Duration(seconds: 15));
     if (res.statusCode != 200) {
-      final err = jsonDecode(utf8.decode(res.bodyBytes))['detail'] ?? 'Error al eliminar';
-      throw Exception(err);
+      String errMsg = 'Error al eliminar (${res.statusCode})';
+      try {
+        final body = jsonDecode(utf8.decode(res.bodyBytes));
+        errMsg = body['detail'] ?? errMsg;
+      } catch (_) {}
+      throw Exception(errMsg);
     }
   }
 }
