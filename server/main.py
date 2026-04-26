@@ -369,6 +369,28 @@ def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str],
     return context_text, sources, user_sources, documents_found
 
 
+async def _call_ollama(messages: list[dict], retries: int = 3) -> str:
+    """Llama a Ollama con reintentos automáticos (por si el modelo está cargando)."""
+    import asyncio
+    last_error: Exception = RuntimeError("Sin respuesta")
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                resp = await client.post(
+                    f"{OLLAMA_URL}/api/chat",
+                    json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
+                )
+                resp.raise_for_status()
+                return resp.json()["message"]["content"]
+        except Exception as e:
+            last_error = e
+            if attempt < retries - 1:
+                wait = 5 * (attempt + 1)
+                logger.warning(f"Ollama intento {attempt + 1} fallido: {e}. Reintentando en {wait}s...")
+                await asyncio.sleep(wait)
+    raise last_error
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     context_text, sources, user_sources, documents_found = _build_rag_context(request)
@@ -378,17 +400,9 @@ async def chat(request: ChatRequest):
     messages.append({"role": "user", "content": user_content})
 
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                f"{OLLAMA_URL}/api/chat",
-                json={
-                    "model": OLLAMA_MODEL,
-                    "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-                    "stream": False,
-                },
-            )
-            resp.raise_for_status()
-            answer = resp.json()["message"]["content"]
+        answer = await _call_ollama(
+            [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+        )
         logger.info(f"Chat | user={request.user_id} | case={request.case_id} | docs={documents_found}")
     except Exception as e:
         logger.error(f"Error Ollama: {e}")
@@ -408,7 +422,7 @@ async def chat_stream(request: ChatRequest):
 
     async def generate():
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=180.0) as client:
                 async with client.stream(
                     "POST",
                     f"{OLLAMA_URL}/api/chat",
