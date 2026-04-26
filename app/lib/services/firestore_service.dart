@@ -15,19 +15,21 @@ class FirestoreService {
     required String displayName,
   }) async {
     if (AppConfig.demoMode) return;
-    final ref = _db!.collection('users').doc(uid);
-    final snap = await ref.get();
-    final isAdmin = AppConfig.adminEmails.contains(email.toLowerCase());
-    if (!snap.exists) {
-      await ref.set({
-        'email': email,
-        'displayName': displayName,
-        'role': isAdmin ? 'admin' : 'user',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    } else if (isAdmin && snap.data()?['role'] != 'admin') {
-      await ref.update({'role': 'admin'});
-    }
+    try {
+      final ref = _db!.collection('users').doc(uid);
+      final snap = await ref.get();
+      final isAdmin = AppConfig.adminEmails.contains(email.toLowerCase());
+      if (!snap.exists) {
+        await ref.set({
+          'email': email,
+          'displayName': displayName,
+          'role': isAdmin ? 'admin' : 'user',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      } else if (isAdmin && snap.data()?['role'] != 'admin') {
+        await ref.update({'role': 'admin'});
+      }
+    } catch (_) {}
   }
 
   Future<String> getUserRole(String uid) async {
