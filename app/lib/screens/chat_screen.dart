@@ -257,9 +257,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
 
     if (cid != null && cid.isNotEmpty) {
-      try { await _firestoreService.saveCaseMessage(uid, cid, userMsg); } catch (_) {}
+      try { await _firestoreService.saveCaseMessage(uid, cid, userMsg).timeout(const Duration(seconds: 3)); } catch (_) {}
     } else {
-      try { await _firestoreService.saveMessage(uid, userMsg); } catch (_) {}
+      try { await _firestoreService.saveMessage(uid, userMsg).timeout(const Duration(seconds: 3)); } catch (_) {}
     }
 
     try {
