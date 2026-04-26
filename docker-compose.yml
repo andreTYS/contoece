@@ -23,19 +23,9 @@ services:
       timeout: 10s
       retries: 3
     labels:
-      - "traefik.enable=true"
-      # Traefik enruta /api/* directamente a FastAPI (evita nginx para la API)
-      - "traefik.http.routers.oece-api.rule=Host(`oece.masredespro.com`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.oece-api.entrypoints=websecure"
-      - "traefik.http.routers.oece-api.tls=true"
-      - "traefik.http.routers.oece-api.priority=10"
-      - "traefik.http.middlewares.oece-strip.stripprefix.prefixes=/api"
-      - "traefik.http.routers.oece-api.middlewares=oece-strip"
-      - "traefik.http.services.oece-api.loadbalancer.server.port=8000"
-      - "traefik.docker.network=n8n_default"
+      - "traefik.enable=false"
     networks:
       - internal
-      - n8n_default
 
   oece-web:
     build:
