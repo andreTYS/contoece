@@ -369,13 +369,16 @@ def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str],
     return context_text, sources, user_sources, documents_found
 
 
-async def _call_ollama(messages: list[dict], retries: int = 3) -> str:
-    """Llama a Ollama con reintentos automáticos (por si el modelo está cargando)."""
+async def _call_ollama(messages: list[dict], retries: int = 2) -> str:
+    """Llama a Ollama con reintentos automáticos.
+
+    Presupuesto de tiempo: 2 intentos × 90s + 3s sleep = 183s < nginx proxy_read_timeout (240s).
+    """
     import asyncio
-    last_error: Exception = RuntimeError("Sin respuesta")
+    last_error: Exception = RuntimeError("Sin respuesta de Ollama")
     for attempt in range(retries):
         try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=5.0)) as client:
                 resp = await client.post(
                     f"{OLLAMA_URL}/api/chat",
                     json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
@@ -385,9 +388,8 @@ async def _call_ollama(messages: list[dict], retries: int = 3) -> str:
         except Exception as e:
             last_error = e
             if attempt < retries - 1:
-                wait = 5 * (attempt + 1)
-                logger.warning(f"Ollama intento {attempt + 1} fallido: {e}. Reintentando en {wait}s...")
-                await asyncio.sleep(wait)
+                logger.warning(f"Ollama intento {attempt + 1} fallido: {e}. Reintentando en 3s...")
+                await asyncio.sleep(3)
     raise last_error
 
 
@@ -422,7 +424,7 @@ async def chat_stream(request: ChatRequest):
 
     async def generate():
         try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=5.0)) as client:
                 async with client.stream(
                     "POST",
                     f"{OLLAMA_URL}/api/chat",

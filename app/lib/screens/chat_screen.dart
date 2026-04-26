@@ -13,6 +13,11 @@ import '../theme/app_theme.dart';
 import '../widgets/chat_bubble.dart';
 import 'login_screen.dart';
 
+const _kTimeoutMsg =
+    'El servidor tardó demasiado en responder. '
+    'Es posible que el modelo de IA esté cargando. '
+    'Puedes intentar de nuevo en unos segundos.';
+
 class ChatScreen extends StatefulWidget {
   final String role;
   const ChatScreen({super.key, required this.role});
@@ -40,6 +45,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _casesLoaded = false;
   String? _activeCaseId;
   String? _activeCaseName;
+  String? _pendingRetryText;
   StreamSubscription<List<CaseModel>>? _casesSub;
 
   bool get _isAdmin => widget.role == 'admin';
@@ -289,18 +295,46 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       if (res.sources.isNotEmpty) _loadSources();
     } catch (e) {
+      final isTimeout = e is TimeoutException ||
+          e.toString().contains('tardó demasiado') ||
+          e.toString().contains('TimeoutException');
+      final errorContent = isTimeout
+          ? _kTimeoutMsg
+          : 'Error al conectar con el servidor.\n\n'
+              '${e.toString().replaceFirst('Exception: ', '')}';
+
       setState(() {
         _messages.remove(loading);
         _messages.add(ChatMessage(
           id: '${DateTime.now().millisecondsSinceEpoch}',
-          content: '**Error al conectar con el servidor.**\n\n'
-              '${e.toString().replaceFirst('Exception: ', '')}',
+          content: errorContent,
           role: MessageRole.assistant,
           timestamp: DateTime.now(),
         ));
         _isLoading = false;
-        _serverConnected = false;
+        if (!isTimeout) _serverConnected = false;
+        _pendingRetryText = text;
       });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isTimeout ? 'Tiempo de espera agotado.' : 'Error de conexión.',
+          ),
+          duration: const Duration(seconds: 8),
+          action: SnackBarAction(
+            label: 'Reintentar',
+            onPressed: () {
+              final retryText = _pendingRetryText;
+              if (retryText != null && retryText.isNotEmpty) {
+                _pendingRetryText = null;
+                _send(retryText);
+              }
+            },
+          ),
+        ),
+      );
     }
     _scrollToBottom();
   }

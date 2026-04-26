@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
@@ -13,18 +14,21 @@ class ChatResponse {
 class ChatService {
   final String _baseUrl = AppConfig.serverUrl;
 
+  // Margen de 10s sobre el presupuesto del backend (2×90s + 3s sleep + nginx = ~183s)
+  static const _chatTimeout = Duration(seconds: 250);
+
   Future<ChatResponse> sendMessage({
     required String message,
     required String userId,
     required List<ChatMessage> history,
     String caseId = '',
   }) async {
-    try {
-      final historyJson = history
-          .where((m) => !m.isLoading)
-          .map((m) => m.toJson())
-          .toList();
+    final historyJson = history
+        .where((m) => !m.isLoading)
+        .map((m) => m.toJson())
+        .toList();
 
+    try {
       final response = await http
           .post(
             Uri.parse('$_baseUrl${AppConfig.chatEndpoint}'),
@@ -36,7 +40,7 @@ class ChatService {
               'conversation_history': historyJson,
             }),
           )
-          .timeout(const Duration(seconds: 120));
+          .timeout(_chatTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
@@ -45,17 +49,25 @@ class ChatService {
                 .toList() ??
             [];
         return ChatResponse(response: data['response'], sources: sources);
+      } else if (response.statusCode == 504) {
+        throw TimeoutException('El servidor tardó demasiado en responder.');
       } else {
-        final detail =
-            jsonDecode(utf8.decode(response.bodyBytes))['detail'] ??
-                'Error del servidor: ${response.statusCode}';
+        String detail;
+        try {
+          detail = jsonDecode(utf8.decode(response.bodyBytes))['detail'] ??
+              'Error del servidor (${response.statusCode})';
+        } catch (_) {
+          detail = 'Error del servidor (${response.statusCode})';
+        }
         throw Exception(detail);
       }
+    } on TimeoutException {
+      throw TimeoutException(
+        'La respuesta tardó demasiado. El modelo puede estar cargando — intenta de nuevo.',
+      );
     } on http.ClientException {
       throw Exception(
           'No se pudo conectar al servidor. Verifica que el servidor esté activo.');
-    } catch (e) {
-      rethrow;
     }
   }
 

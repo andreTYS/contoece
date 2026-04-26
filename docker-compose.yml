@@ -44,6 +44,10 @@ services:
       - "traefik.http.routers.oece-web.entrypoints=websecure"
       - "traefik.http.routers.oece-web.tls=true"
       - "traefik.http.services.oece-web.loadbalancer.server.port=80"
+      # ServersTransport: Traefik espera hasta 270s por respuesta de nginx (> 240s nginx + margen)
+      - "traefik.http.serversTransports.oece-transport.forwardingTimeouts.responseHeaderTimeout=270s"
+      - "traefik.http.serversTransports.oece-transport.forwardingTimeouts.dialTimeout=10s"
+      - "traefik.http.services.oece-web.loadbalancer.serversTransport=oece-transport"
       # HTTP router — certbot ACME challenge
       - "traefik.http.routers.oece-acme.rule=Host(`oece.masredespro.com`) && PathPrefix(`/.well-known/acme-challenge/`)"
       - "traefik.http.routers.oece-acme.entrypoints=web"
