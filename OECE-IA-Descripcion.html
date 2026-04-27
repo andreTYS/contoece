@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>OECE-IA — Descripción del Proyecto</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', Arial, sans-serif;
+      font-size: 11pt;
+      color: #1a1a2e;
+      background: #fff;
+      line-height: 1.6;
+    }
+
+    /* ── PORTADA ── */
+    .cover {
+      height: 100vh;
+      min-height: 700px;
+      background: linear-gradient(135deg, #0f3460 0%, #16213e 60%, #0d1b2a 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 60px 40px;
+      page-break-after: always;
+      position: relative;
+      overflow: hidden;
+    }
+    .cover::before {
+      content: '';
+      position: absolute;
+      width: 500px; height: 500px;
+      border-radius: 50%;
+      background: rgba(229, 57, 53, 0.08);
+      top: -100px; right: -100px;
+    }
+    .cover::after {
+      content: '';
+      position: absolute;
+      width: 300px; height: 300px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.04);
+      bottom: -80px; left: -60px;
+    }
+    .cover-badge {
+      background: rgba(229,57,53,0.2);
+      border: 1px solid rgba(229,57,53,0.5);
+      color: #ff6b6b;
+      padding: 6px 20px;
+      border-radius: 20px;
+      font-size: 9pt;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 32px;
+    }
+    .cover-logo {
+      font-size: 52pt;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -2px;
+      margin-bottom: 8px;
+    }
+    .cover-logo span { color: #e53935; }
+    .cover-subtitle {
+      font-size: 14pt;
+      color: rgba(255,255,255,0.7);
+      font-weight: 300;
+      margin-bottom: 48px;
+      max-width: 500px;
+    }
+    .cover-divider {
+      width: 60px; height: 3px;
+      background: #e53935;
+      margin: 0 auto 48px;
+    }
+    .cover-meta {
+      display: flex;
+      gap: 48px;
+      justify-content: center;
+    }
+    .cover-meta-item { text-align: center; }
+    .cover-meta-item .val {
+      font-size: 20pt;
+      font-weight: 700;
+      color: #fff;
+    }
+    .cover-meta-item .lbl {
+      font-size: 8pt;
+      color: rgba(255,255,255,0.5);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 2px;
+    }
+    .cover-footer {
+      position: absolute;
+      bottom: 32px;
+      font-size: 8pt;
+      color: rgba(255,255,255,0.3);
+      letter-spacing: 1px;
+    }
+
+    /* ── LAYOUT ── */
+    .page {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 56px 64px;
+    }
+
+    /* ── SECCIONES ── */
+    .section { margin-bottom: 48px; }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #f0f0f0;
+    }
+    .section-number {
+      background: #0f3460;
+      color: #fff;
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10pt;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .section-title {
+      font-size: 14pt;
+      font-weight: 700;
+      color: #0f3460;
+      letter-spacing: -0.3px;
+    }
+
+    p { margin-bottom: 12px; color: #333; }
+
+    /* ── ARQUITECTURA ── */
+    .arch-diagram {
+      background: #f8fafd;
+      border: 1px solid #dde4ef;
+      border-radius: 12px;
+      padding: 32px;
+      margin: 20px 0;
+    }
+    .arch-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      margin-bottom: 8px;
+    }
+    .arch-box {
+      background: #fff;
+      border: 1.5px solid #c5d0e6;
+      border-radius: 8px;
+      padding: 10px 18px;
+      text-align: center;
+      min-width: 140px;
+    }
+    .arch-box .title {
+      font-weight: 600;
+      font-size: 9.5pt;
+      color: #0f3460;
+    }
+    .arch-box .sub {
+      font-size: 8pt;
+      color: #888;
+      margin-top: 2px;
+    }
+    .arch-box.highlight {
+      background: #0f3460;
+      border-color: #0f3460;
+    }
+    .arch-box.highlight .title { color: #fff; }
+    .arch-box.highlight .sub { color: rgba(255,255,255,0.6); }
+    .arch-box.accent {
+      background: #e53935;
+      border-color: #e53935;
+    }
+    .arch-box.accent .title { color: #fff; }
+    .arch-box.accent .sub { color: rgba(255,255,255,0.7); }
+    .arch-arrow {
+      font-size: 18pt;
+      color: #aab4cc;
+      padding: 0 8px;
+      line-height: 1;
+    }
+
+    /* ── STACK CARDS ── */
+    .stack-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 16px;
+    }
+    .stack-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 16px 18px;
+      background: #fafbfd;
+    }
+    .stack-card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .stack-icon {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14pt;
+      flex-shrink: 0;
+    }
+    .stack-card-title { font-weight: 600; font-size: 10pt; color: #0f3460; }
+    .stack-card-desc { font-size: 9pt; color: #666; line-height: 1.5; }
+
+    /* ── FEATURES ── */
+    .feature-list { list-style: none; padding: 0; }
+    .feature-list li {
+      padding: 12px 0 12px 28px;
+      border-bottom: 1px solid #f0f0f0;
+      position: relative;
+      font-size: 10.5pt;
+      color: #333;
+    }
+    .feature-list li:last-child { border-bottom: none; }
+    .feature-list li::before {
+      content: '✓';
+      position: absolute;
+      left: 0;
+      color: #e53935;
+      font-weight: 700;
+    }
+    .feature-list li strong { color: #0f3460; }
+
+    /* ── FLOW ── */
+    .flow-steps { margin-top: 16px; }
+    .flow-step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+      align-items: flex-start;
+    }
+    .flow-step-num {
+      background: linear-gradient(135deg, #0f3460, #1a4a80);
+      color: #fff;
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 10pt;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .flow-step-content {}
+    .flow-step-title { font-weight: 600; font-size: 10.5pt; color: #0f3460; margin-bottom: 3px; }
+    .flow-step-desc { font-size: 9.5pt; color: #555; line-height: 1.5; }
+
+    /* ── STATS ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .stat-card {
+      background: linear-gradient(135deg, #0f3460, #16213e);
+      border-radius: 12px;
+      padding: 24px 20px;
+      text-align: center;
+      color: #fff;
+    }
+    .stat-card .number {
+      font-size: 26pt;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .stat-card .number span { color: #e53935; }
+    .stat-card .label {
+      font-size: 8.5pt;
+      color: rgba(255,255,255,0.6);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* ── SECURITY ── */
+    .info-box {
+      background: #eef2ff;
+      border-left: 4px solid #0f3460;
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 16px 0;
+    }
+    .info-box p { margin: 0; font-size: 10pt; color: #333; }
+
+    .warn-box {
+      background: #fff8e1;
+      border-left: 4px solid #f59e0b;
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 16px 0;
+    }
+    .warn-box p { margin: 0; font-size: 10pt; color: #555; }
+
+    /* ── TABLE ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 9.5pt;
+    }
+    th {
+      background: #0f3460;
+      color: #fff;
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 600;
+    }
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #eee;
+      color: #444;
+    }
+    tr:nth-child(even) td { background: #f8fafd; }
+
+    /* ── FOOTER ── */
+    .doc-footer {
+      margin-top: 64px;
+      padding-top: 24px;
+      border-top: 2px solid #0f3460;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 8.5pt;
+      color: #aaa;
+    }
+    .doc-footer strong { color: #0f3460; }
+
+    /* ── PRINT ── */
+    @media print {
+      body { font-size: 10pt; }
+      .cover { page-break-after: always; height: 100vh; }
+      .section { page-break-inside: avoid; }
+      .stack-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════ PORTADA -->
+<div class="cover">
+  <div class="cover-badge">Proyecto Tecnológico — 2026</div>
+  <div class="cover-logo">OECE<span>-IA</span></div>
+  <div class="cover-subtitle">Asistente de Inteligencia Artificial para Contrataciones Públicas del Estado Peruano</div>
+  <div class="cover-divider"></div>
+  <div class="cover-meta">
+    <div class="cover-meta-item">
+      <div class="val">362</div>
+      <div class="lbl">Documentos indexados</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="val">100%</div>
+      <div class="lbl">Privacidad local</div>
+    </div>
+    <div class="cover-meta-item">
+      <div class="val">Web + APK</div>
+      <div class="lbl">Plataformas</div>
+    </div>
+  </div>
+  <div class="cover-footer">OECE — Organismo Especializado en Contrataciones del Estado &nbsp;|&nbsp; Confidencial</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ CONTENIDO -->
+<div class="page">
+
+  <!-- 1. RESUMEN EJECUTIVO -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-number">1</div>
+      <div class="section-title">Resumen Ejecutivo</div>
+    </div>
+    <p>
+      <strong>OECE-IA</strong> es un asistente virtual especializado en el sistema de contrataciones públicas del Perú, desarrollado para apoyar a funcionarios, servidores públicos y proveedores del Estado en la interpretación y aplicación de la normativa vigente.
+    </p>
+    <p>
+      El sistema combina un <strong>modelo de lenguaje local</strong> (sin dependencia de APIs externas de pago) con una <strong>base de conocimiento vectorial</strong> alimentada por los documentos oficiales de la OECE: leyes, reglamentos, directivas, resoluciones y pronunciamientos institucionales.
+    </p>
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="number">362<span>+</span></div>
+        <div class="label">Documentos en la base de conocimiento</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">0<span>$</span></div>
+        <div class="label">Costo por consulta (LLM local)</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">RAG<span>+</span></div>
+        <div class="label">Generación aumentada por recuperación</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. ARQUITECTURA -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-number">2</div>
+      <div class="section-title">Arquitectura del Sistema</div>
+    </div>
+    <p>El sistema está compuesto por tres capas principales interconectadas mediante una red Docker privada:</p>
+
+    <div class="arch-diagram">
+      <div class="arch-row">
+        <div class="arch-box">
+          <div class="title">Navegador / App</div>
+          <div class="sub">Flutter Web · Android APK</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box">
+          <div class="title">Traefik + nginx</div>
+          <div class="sub">Proxy inverso · TLS · HTTPS</div>
+        </div>
+      </div>
+      <div style="text-align:center; color:#aab4cc; font-size:18pt; margin: 4px 0;">↓</div>
+      <div class="arch-row">
+        <div class="arch-box highlight">
+          <div class="title">FastAPI (Python)</div>
+          <div class="sub">API REST · RAG pipeline · Endpoints admin/usuario</div>
+        </div>
+      </div>
+      <div style="text-align:center; color:#aab4cc; font-size:18pt; margin: 4px 0;">↓ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↓</div>
+      <div class="arch-row" style="justify-content: center; gap: 24px;">
+        <div class="arch-box accent">
+          <div class="title">Ollama + LLM</div>
+          <div class="sub">qwen2.5 · Inferencia local</div>
+        </div>
+        <div class="arch-box">
+          <div class="title">ChromaDB</div>
+          <div class="sub">Vectores · Embeddings multilingüe</div>
+        </div>
+        <div class="arch-box">
+          <div class="title">Firebase</div>
+          <div class="sub">Auth · Firestore · Historial</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. STACK TECNOLÓGICO -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-number">3</div>
+      <div class="section-title">Stack Tecnológico</div>
+    </div>
+    <div class="stack-grid">
+      <div class="stack-card">
+        <div class="stack-card-header">
+          <div class="stack-icon" style="background:#e8f4fd;">🐦</div>
+          <div class="stack-card-title">Flutter</div>
+        </div>
+        <div class="stack-card-desc">Interfaz multiplataforma. Compilado para Web y Android APK. UI responsiva con soporte desktop y móvil.</div>
+      </div>
+      <div class="stack-card">
+        <div class="stack-card-header">
+          <div class="stack-icon" style="background:#fef3e2;">🐍</div>
+          <div class="stack-card-title">FastAPI (Python)</div>
+        </div>
+        <div class="stack-card-desc">Backend principal. Gestiona el pipeline RAG, endpoints de chat, administración de documentos y usuarios.</div>
+      </div>
+      <div class="stack-card">
+        <div class="stack-card-header">
+          <div class="stack-icon" style="background:#f0fdf4;">🤖</div>
+          <div class="stack-card-title">Ollama + Qwen 2.5</div>
+        </div>
+        <div class="stack-card-desc">Modelo de lenguaje local. Sin costos por consulta. Óptimo para español. Privacidad total de datos.</div>
+      </div>
+      <div class="stack-card">
+        <div class="stack-card-header">
+          <div class="stack-icon" style="background:#fdf4ff;">🗄️</div>
+          <div class="stack-card-title">ChromaDB</div>
+        </div>
+        <div class="stack-card-desc">Base de datos vectorial para búsqueda semántica. Embeddings multilingüe con paraphrase-multilingual-MiniLM.</div>
+      </div>
+      <div class="stack-card">
+        <div class="stack-card-header">
+          <div class="stack-icon" style="background:#fff7ed;">🔥</div>
+          <div class="stack-card-title">Firebase</div>
+        </div>
+        <div class="stack-card-desc">Autenticación con Google Sign-In. Firestore para historial de conversaciones y gestión de roles.</div>
+      </div>
+      <div class="stack-card">
+        <div class="stack-card-header">
+          <div class="stack-icon" style="background:#eff6ff;">🐳</div>
+          <div class="stack-card-title">Docker + Traefik</div>
+        </div>
+        <div class="stack-card-desc">Infraestructura containerizada. Traefik como proxy inverso con TLS automático. Despliegue en VPS.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. FUNCIONALIDADES -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-number">4</div>
+      <div class="section-title">Funcionalidades Principales</div>
+    </div>
+    <ul class="feature-list">
+      <li><strong>Chat con IA especializada:</strong> respuestas basadas en la normativa vigente de contrataciones del Estado peruano.</li>
+      <li><strong>RAG (Retrieval-Augmented Generation):</strong> el sistema recupera fragmentos relevantes de 362+ documentos antes de generar cada respuesta.</li>
+      <li><strong>Doble base de conocimiento:</strong> colección pública OECE + documentos privados por usuario filtrados por caso/expediente.</li>
+      <li><strong>Gestión de casos:</strong> los usuarios organizan conversaciones por expediente o proyecto de contratación.</li>
+      <li><strong>Subida de documentos:</strong> usuarios y administradores pueden cargar PDFs, DOCX y TXT al sistema.</li>
+      <li><strong>Panel de administración:</strong> gestión de la base de conocimiento, administración de usuarios y asignación de roles.</li>
+      <li><strong>Historial persistente:</strong> todas las conversaciones se guardan en Firestore y se recuperan entre sesiones.</li>
+      <li><strong>Autenticación segura:</strong> Google Sign-In con Firebase Auth. Control de roles admin/usuario.</li>
+      <li><strong>Interfaz responsiva:</strong> layout adaptado para escritorio (panel lateral de casos) y móvil.</li>
+      <li><strong>Sugerencias de preguntas:</strong> preguntas frecuentes preconfiguradas para orientar al usuario.</li>
+    </ul>
+  </div>
+
+  <!-- 5. FLUJO DE UNA CONSULTA -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-number">5</div>
+      <div class="section-title">Flujo de una Consulta</div>
+    </div>
+    <div class="flow-steps">
+      <div class="flow-step">
+        <div class="flow-step-num">1</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title">El usuario escribe su consulta</div>
+          <div class="flow-step-desc">Desde la app web o móvil, dentro de un caso/expediente activo o en modo general.</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-num">2</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title">Búsqueda semántica en ChromaDB</div>
+          <div class="flow-step-desc">El backend convierte la consulta en un vector y busca los 3 fragmentos más relevantes de la base OECE y los documentos del usuario.</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-num">3</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title">Construcción del prompt aumentado</div>
+          <div class="flow-step-desc">Se combina el contexto recuperado + los últimos 6 mensajes del historial + la consulta del usuario en un prompt estructurado.</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-num">4</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title">Generación de respuesta con Ollama</div>
+          <div class="flow-step-desc">El LLM local genera la respuesta citando las fuentes relevantes. El sistema prompt garantiza tono formal e institucional.</div>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-num">5</div>
+        <div class="flow-step-content">
+          <div class="flow-step-title">Respuesta mostrada y guardada</div>
+          <div class="flow-step-desc">La respuesta aparece en el chat con las fuentes documentales citadas. Se guarda automáticamente en Firestore.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. DOCUMENTOS SOPORTADOS -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-number">6</div>
+      <div class="section-title">Gestión Documental</div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Formato</th>
+          <th>Procesamiento</th>
+          <th>Uso</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>PDF</td>
+          <td>pdfplumber — extracción página a página con número de página</td>
+          <td>Leyes, reglamentos, directivas, resoluciones</td>
+        </tr>
+        <tr>
+          <td>DOCX</td>
+          <td>python-docx — párrafo a párrafo</td>
+          <td>Bases, TDR, expedientes técnicos</td>
+        </tr>
+        <tr>
+          <td>TXT / MD</td>
+          <td>Lectura directa UTF-8</td>
+          <td>Notas, minutas, guías internas</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="info-box">
+      <p><strong>Chunking inteligente:</strong> los documentos se dividen en fragmentos de 800 caracteres con solapamiento de 150 caracteres, respetando límites de párrafo y oración para preservar el contexto semántico.</p>
+    </div>
+    <div class="info-box">
+      <p><strong>Deduplicación automática:</strong> el sistema detecta archivos ya indexados mediante hash MD5, evitando duplicados al actualizar documentos.</p>
+    </div>
+  </div>
+
+  <!-- 7. SEGURIDAD Y PRIVACIDAD -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-number">7</div>
+      <div class="section-title">Seguridad y Privacidad</div>
+    </div>
+    <ul class="feature-list">
+      <li><strong>LLM completamente local:</strong> ninguna consulta sale del servidor hacia APIs externas de terceros.</li>
+      <li><strong>Autenticación Firebase:</strong> solo usuarios con cuenta Google autorizada pueden acceder al sistema.</li>
+      <li><strong>Control de roles:</strong> administradores y usuarios con permisos diferenciados sobre la base de conocimiento.</li>
+      <li><strong>Comunicación cifrada:</strong> TLS/HTTPS en todos los endpoints mediante Traefik con certificados automáticos.</li>
+      <li><strong>Aislamiento de red:</strong> los servicios internos (Ollama, ChromaDB) no son accesibles desde internet.</li>
+      <li><strong>Documentos por usuario:</strong> cada usuario solo accede a sus propios documentos privados.</li>
+    </ul>
+    <div class="warn-box">
+      <p><strong>Pendiente de hardening:</strong> externalizar configuraciones sensibles (emails admin, Client ID de Google) a variables de entorno antes de despliegue en producción ampliado.</p>
+    </div>
+  </div>
+
+  <!-- 8. INFRAESTRUCTURA -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-number">8</div>
+      <div class="section-title">Infraestructura de Despliegue</div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Servicio</th>
+          <th>Imagen / Tecnología</th>
+          <th>Función</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>oece-web</td>
+          <td>nginx + Flutter Web (compilado)</td>
+          <td>Sirve la app al navegador, proxy a FastAPI</td>
+        </tr>
+        <tr>
+          <td>oece-server</td>
+          <td>Python 3.12 + FastAPI + Uvicorn</td>
+          <td>API REST, pipeline RAG, gestión documental</td>
+        </tr>
+        <tr>
+          <td>oece-ollama</td>
+          <td>ollama/ollama + qwen2.5</td>
+          <td>Inferencia del modelo de lenguaje local</td>
+        </tr>
+        <tr>
+          <td>Traefik</td>
+          <td>traefik:v2 (red compartida)</td>
+          <td>Proxy inverso, TLS automático, routing HTTPS</td>
+        </tr>
+        <tr>
+          <td>Firebase</td>
+          <td>Google Cloud (externo)</td>
+          <td>Autenticación y base de datos de conversaciones</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="info-box">
+      <p><strong>Dominio:</strong> <code>oece.masredespro.com</code> &nbsp;|&nbsp; <strong>Entorno:</strong> VPS Ubuntu con Docker Compose &nbsp;|&nbsp; <strong>Backup:</strong> volúmenes Docker persistentes para ChromaDB y datos</p>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="doc-footer">
+    <div><strong>OECE-IA</strong> — Documento Descriptivo del Proyecto</div>
+    <div>Versión 1.0 &nbsp;|&nbsp; Abril 2026 &nbsp;|&nbsp; Confidencial</div>
+  </div>
+
+</div>
+
+<!-- Botón de impresión (no aparece al imprimir) -->
+<div style="position:fixed; bottom:24px; right:24px; print:none;">
+  <button onclick="window.print()" style="
+    background:#0f3460; color:#fff; border:none;
+    padding:12px 24px; border-radius:8px;
+    font-size:11pt; cursor:pointer; font-family:inherit;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  ">
+    Guardar como PDF
+  </button>
+</div>
+<style>
+  @media print { button { display: none !important; } }
+</style>
+
+</body>
+</html>
