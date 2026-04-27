@@ -320,7 +320,7 @@ def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str],
         try:
             results = chroma_main_collection.query(
                 query_texts=[request.message],
-                n_results=min(5, chroma_main_collection.count()),
+                n_results=min(3, chroma_main_collection.count()),
                 include=["documents", "metadatas", "distances"],
             )
             docs = results.get("documents", [[]])[0]
@@ -397,7 +397,7 @@ async def _call_ollama(messages: list[dict], retries: int = 2) -> str:
 async def chat(request: ChatRequest):
     context_text, sources, user_sources, documents_found = _build_rag_context(request)
 
-    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-12:]]
+    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-6:]]
     user_content = request.message + (context_text if context_text else "")
     messages.append({"role": "user", "content": user_content})
 
@@ -418,7 +418,7 @@ async def chat_stream(request: ChatRequest):
     """Endpoint SSE: devuelve tokens conforme Ollama los genera."""
     context_text, sources, _, documents_found = _build_rag_context(request)
 
-    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-12:]]
+    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-6:]]
     user_content = request.message + (context_text if context_text else "")
     messages.append({"role": "user", "content": user_content})
 
