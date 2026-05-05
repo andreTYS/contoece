@@ -323,6 +323,11 @@ def _to_gemini_history(messages: list[dict]) -> list[types.Content]:
     return history
 
 
+def _is_quota_error(e: Exception) -> bool:
+    s = str(e).lower()
+    return "429" in s or "quota" in s or "resource_exhausted" in s
+
+
 async def _call_gemini(messages: list[dict], retries: int = 4) -> str:
     if not gemini_client:
         raise HTTPException(status_code=503, detail="GEMINI_API_KEY no configurada.")
@@ -339,13 +344,17 @@ async def _call_gemini(messages: list[dict], retries: int = 4) -> str:
             return response.text
         except Exception as e:
             last_error = e
-            err_str = str(e).lower()
-            if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
-                wait = 2 ** attempt
-                logger.warning(f"Gemini rate limit (intento {attempt + 1}). Reintentando en {wait}s...")
+            if _is_quota_error(e):
+                wait = 15 * (2 ** attempt)  # 15s, 30s, 60s, 120s
+                logger.warning(f"Gemini rate limit (intento {attempt + 1}/{retries}). Reintentando en {wait}s...")
                 await asyncio.sleep(wait)
             else:
                 break
+    if _is_quota_error(last_error):
+        raise HTTPException(
+            status_code=429,
+            detail="El servicio de IA está temporalmente saturado. Por favor espera unos minutos e intenta de nuevo.",
+        )
     raise last_error
 
 
@@ -354,6 +363,7 @@ async def _stream_gemini(messages: list[dict]):
         yield "Error: GEMINI_API_KEY no configurada."
         return
     history = _to_gemini_history(messages[:-1])
+    last_error: Exception = RuntimeError("Sin respuesta de Gemini")
     for attempt in range(3):
         try:
             chat = gemini_client.aio.chats.create(
@@ -366,13 +376,19 @@ async def _stream_gemini(messages: list[dict]):
                     yield chunk.text
             return
         except Exception as e:
-            err_str = str(e).lower()
-            if ("429" in err_str or "quota" in err_str or "resource_exhausted" in err_str) and attempt < 2:
-                wait = 2 ** attempt
-                logger.warning(f"Gemini stream rate limit (intento {attempt + 1}). Reintentando en {wait}s...")
+            last_error = e
+            if _is_quota_error(e) and attempt < 2:
+                wait = 15 * (2 ** attempt)  # 15s, 30s
+                logger.warning(f"Gemini stream rate limit (intento {attempt + 1}/3). Reintentando en {wait}s...")
                 await asyncio.sleep(wait)
             else:
-                raise
+                break
+    if _is_quota_error(last_error):
+        raise HTTPException(
+            status_code=429,
+            detail="El servicio de IA está temporalmente saturado. Por favor espera unos minutos e intenta de nuevo.",
+        )
+    raise last_error
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ import '../models/message_model.dart';
 import '../screens/admin_screen.dart';
 import '../services/admin_service.dart';
 import '../services/auth_service.dart';
-import '../services/chat_service.dart';
+import '../services/chat_service.dart' show ChatService, ChatResponse, RateLimitException;
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/chat_bubble.dart';
@@ -298,10 +298,20 @@ class _ChatScreenState extends State<ChatScreen> {
       final isTimeout = e is TimeoutException ||
           e.toString().contains('tardó demasiado') ||
           e.toString().contains('TimeoutException');
+      final isRateLimit = e is RateLimitException;
+
       final errorContent = isTimeout
           ? _kTimeoutMsg
-          : 'Error al conectar con el servidor.\n\n'
-              '${e.toString().replaceFirst('Exception: ', '')}';
+          : isRateLimit
+              ? e.toString()
+              : 'Error al conectar con el servidor.\n\n'
+                  '${e.toString().replaceFirst('Exception: ', '')}';
+
+      final snackMsg = isTimeout
+          ? 'Tiempo de espera agotado.'
+          : isRateLimit
+              ? 'Servicio saturado — intenta en unos minutos.'
+              : 'Error de conexión.';
 
       setState(() {
         _messages.remove(loading);
@@ -312,16 +322,14 @@ class _ChatScreenState extends State<ChatScreen> {
           timestamp: DateTime.now(),
         ));
         _isLoading = false;
-        if (!isTimeout) _serverConnected = false;
+        if (!isTimeout && !isRateLimit) _serverConnected = false;
         _pendingRetryText = text;
       });
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            isTimeout ? 'Tiempo de espera agotado.' : 'Error de conexión.',
-          ),
+          content: Text(snackMsg),
           duration: const Duration(seconds: 8),
           action: SnackBarAction(
             label: 'Reintentar',

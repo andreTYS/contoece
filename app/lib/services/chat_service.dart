@@ -4,6 +4,13 @@ import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import '../models/message_model.dart';
 
+class RateLimitException implements Exception {
+  final String message;
+  const RateLimitException(this.message);
+  @override
+  String toString() => message;
+}
+
 class ChatResponse {
   final String response;
   final List<String> sources;
@@ -51,6 +58,11 @@ class ChatService {
         return ChatResponse(response: data['response'], sources: sources);
       } else if (response.statusCode == 504) {
         throw TimeoutException('El servidor tardó demasiado en responder.');
+      } else if (response.statusCode == 429) {
+        throw RateLimitException(
+          'El servicio de IA está temporalmente saturado. '
+          'Por favor espera unos minutos e intenta de nuevo.',
+        );
       } else {
         String detail;
         try {
