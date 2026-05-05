@@ -2,7 +2,7 @@
 OECE-IA - Script de Ingestión de Documentos
 ============================================
 Carga documentos (PDF, DOCX, TXT) en la base de datos vectorial (ChromaDB)
-para que la IA pueda usarlos como contexto en las respuestas.
+usando Gemini text-embedding-004 para que la IA pueda usarlos como contexto.
 
 USO:
     python ingest.py                    # Ingesta todos los archivos en ./data/
@@ -22,7 +22,8 @@ import uuid
 from pathlib import Path
 
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+import google.generativeai as genai
+from chromadb import Documents, EmbeddingFunction, Embeddings
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -33,16 +34,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ingest")
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 DATA_DIR = os.getenv("DATA_DIR", "./data")
-CHUNK_SIZE = 800      # Caracteres por chunk
-CHUNK_OVERLAP = 150   # Solapamiento entre chunks
+CHUNK_SIZE = 800
+CHUNK_OVERLAP = 150
+
+if not GEMINI_API_KEY:
+    logger.error("GEMINI_API_KEY no configurada. Configura la variable de entorno antes de ejecutar.")
+    sys.exit(1)
+
+genai.configure(api_key=GEMINI_API_KEY)
+
+
+# ─── Embedding con Gemini ─────────────────────────────────────────────────────
+
+class GeminiEmbeddingFunction(EmbeddingFunction):
+    _BATCH_SIZE = 100
+
+    def __call__(self, input: Documents) -> Embeddings:
+        if not input:
+            return []
+        all_embeddings: Embeddings = []
+        for i in range(0, len(input), self._BATCH_SIZE):
+            batch = input[i : i + self._BATCH_SIZE]
+            result = genai.embed_content(
+                model=GEMINI_EMBEDDING_MODEL,
+                content=batch,
+                task_type="retrieval_document",
+            )
+            all_embeddings.extend(result["embedding"])
+        return all_embeddings
 
 
 # ─── Lectura de documentos ────────────────────────────────────────────────────
 
 def read_pdf(path: Path) -> str:
-    """Lee un PDF y extrae todo el texto."""
     try:
         import pdfplumber
         text_parts = []
@@ -61,7 +89,6 @@ def read_pdf(path: Path) -> str:
 
 
 def read_docx(path: Path) -> str:
-    """Lee un archivo Word (.docx) y extrae el texto."""
     try:
         from docx import Document
         doc = Document(str(path))
@@ -76,7 +103,6 @@ def read_docx(path: Path) -> str:
 
 
 def read_txt(path: Path) -> str:
-    """Lee un archivo de texto plano."""
     try:
         return path.read_text(encoding="utf-8", errors="ignore")
     except Exception as e:
@@ -85,7 +111,6 @@ def read_txt(path: Path) -> str:
 
 
 def read_document(path: Path) -> str:
-    """Detecta el tipo de archivo y lo lee."""
     ext = path.suffix.lower()
     if ext == ".pdf":
         return read_pdf(path)
@@ -101,7 +126,6 @@ def read_document(path: Path) -> str:
 # ─── Chunking ─────────────────────────────────────────────────────────────────
 
 def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
-    """Divide el texto en chunks con solapamiento."""
     if len(text) <= chunk_size:
         return [text]
 
@@ -109,15 +133,12 @@ def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     start = 0
     while start < len(text):
         end = start + chunk_size
-
-        # Busca un salto de línea o punto para no cortar a la mitad
         if end < len(text):
             for sep in ["\n\n", "\n", ". ", " "]:
                 idx = text.rfind(sep, start, end)
                 if idx > start + chunk_size // 2:
                     end = idx + len(sep)
                     break
-
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
@@ -129,11 +150,8 @@ def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
 # ─── Ingestión ────────────────────────────────────────────────────────────────
 
 def get_collection() -> chromadb.Collection:
-    """Obtiene o crea la colección en ChromaDB."""
     chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-    emb_fn = SentenceTransformerEmbeddingFunction(
-        model_name="paraphrase-multilingual-MiniLM-L12-v2"
-    )
+    emb_fn = GeminiEmbeddingFunction()
     return chroma_client.get_or_create_collection(
         name="contrataciones_oece",
         embedding_function=emb_fn,
@@ -142,7 +160,6 @@ def get_collection() -> chromadb.Collection:
 
 
 def file_hash(path: Path) -> str:
-    """Calcula el hash MD5 de un archivo para detectar duplicados."""
     h = hashlib.md5()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
@@ -151,10 +168,6 @@ def file_hash(path: Path) -> str:
 
 
 def ingest_file(path: Path, collection: chromadb.Collection, force: bool = False) -> int:
-    """
-    Ingesta un archivo en ChromaDB.
-    Retorna el número de chunks añadidos.
-    """
     path = Path(path)
     if not path.exists():
         logger.error(f"Archivo no encontrado: {path}")
@@ -163,7 +176,6 @@ def ingest_file(path: Path, collection: chromadb.Collection, force: bool = False
     fhash = file_hash(path)
     source_name = path.name
 
-    # Verificar si ya fue ingestado (por hash)
     if not force:
         existing = collection.get(where={"file_hash": fhash})
         if existing["ids"]:
@@ -178,9 +190,8 @@ def ingest_file(path: Path, collection: chromadb.Collection, force: bool = False
         return 0
 
     chunks = split_text(text)
-    logger.info(f"'{source_name}' → {len(chunks)} chunks")
+    logger.info(f"'{source_name}' → {len(chunks)} chunks — generando embeddings con Gemini...")
 
-    # Eliminar versiones anteriores del mismo archivo (por nombre)
     try:
         old = collection.get(where={"source": source_name})
         if old["ids"]:
@@ -189,7 +200,6 @@ def ingest_file(path: Path, collection: chromadb.Collection, force: bool = False
     except Exception:
         pass
 
-    # Añadir chunks nuevos
     ids = [str(uuid.uuid4()) for _ in chunks]
     metadatas = [
         {
@@ -207,7 +217,6 @@ def ingest_file(path: Path, collection: chromadb.Collection, force: bool = False
 
 
 def ingest_directory(data_dir: str = DATA_DIR, force: bool = False) -> None:
-    """Ingesta todos los documentos en el directorio especificado."""
     data_path = Path(data_dir)
     if not data_path.exists():
         logger.error(f"Directorio no encontrado: {data_dir}")
@@ -233,7 +242,6 @@ def ingest_directory(data_dir: str = DATA_DIR, force: bool = False) -> None:
 
 
 def list_documents() -> None:
-    """Lista los documentos que están en la base de datos."""
     collection = get_collection()
     total = collection.count()
     if total == 0:
@@ -254,7 +262,6 @@ def list_documents() -> None:
 
 
 def clear_database() -> None:
-    """Limpia completamente la base de datos vectorial."""
     confirm = input("¿Estás seguro de que deseas borrar TODA la base? (escribe 'SI' para confirmar): ")
     if confirm.strip().upper() != "SI":
         print("Operación cancelada.")
@@ -271,33 +278,17 @@ def clear_database() -> None:
 # ─── CLI ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="OECE-IA - Ingestión de documentos en base vectorial"
+        description="OECE-IA - Ingestión de documentos en base vectorial (Gemini embeddings)"
     )
     parser.add_argument(
         "file",
         nargs="?",
         help="Ruta a un archivo específico para ingestar (PDF, DOCX, TXT)",
     )
-    parser.add_argument(
-        "--clear",
-        action="store_true",
-        help="Limpia toda la base de datos vectorial",
-    )
-    parser.add_argument(
-        "--list",
-        action="store_true",
-        help="Lista los documentos en la base de datos",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Re-ingesta aunque el archivo ya exista",
-    )
-    parser.add_argument(
-        "--dir",
-        default=DATA_DIR,
-        help=f"Directorio a ingestar (default: {DATA_DIR})",
-    )
+    parser.add_argument("--clear", action="store_true", help="Limpia toda la base de datos vectorial")
+    parser.add_argument("--list", action="store_true", help="Lista los documentos en la base de datos")
+    parser.add_argument("--force", action="store_true", help="Re-ingesta aunque el archivo ya exista")
+    parser.add_argument("--dir", default=DATA_DIR, help=f"Directorio a ingestar (default: {DATA_DIR})")
 
     args = parser.parse_args()
 

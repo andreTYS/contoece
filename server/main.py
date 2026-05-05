@@ -1,6 +1,6 @@
 """
 OECE-IA - Servidor de IA para Contrataciones Públicas del Estado Peruano
-Desarrollado con FastAPI + Ollama (LLM local) + ChromaDB (RAG)
+Desarrollado con FastAPI + Gemini API (LLM + embeddings) + ChromaDB (RAG)
 """
 
 import hashlib
@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import Optional
 
 import chromadb
-import httpx
 import json
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+import google.generativeai as genai
+from chromadb import Documents, EmbeddingFunction, Embeddings
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,8 +28,9 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("oece-ia")
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 CHUNK_SIZE = 800
@@ -75,44 +76,47 @@ Proporcionar información precisa, confiable y actualizada sobre el sistema de c
 - Soporte técnico de esta app: WhatsApp +51 910 561 256
 """
 
+# ─── Embedding con Gemini ─────────────────────────────────────────────────────
+
+class GeminiEmbeddingFunction(EmbeddingFunction):
+    """Función de embedding usando Gemini text-embedding-004."""
+
+    _BATCH_SIZE = 100  # límite de la API de Gemini
+
+    def __call__(self, input: Documents) -> Embeddings:
+        if not input:
+            return []
+        all_embeddings: Embeddings = []
+        for i in range(0, len(input), self._BATCH_SIZE):
+            batch = input[i : i + self._BATCH_SIZE]
+            result = genai.embed_content(
+                model=GEMINI_EMBEDDING_MODEL,
+                content=batch,
+                task_type="retrieval_document",
+            )
+            all_embeddings.extend(result["embedding"])
+        return all_embeddings
+
+
 # ─── Estado global ────────────────────────────────────────────────────────────
 chroma_client_instance: Optional[chromadb.PersistentClient] = None
 chroma_main_collection: Optional[chromadb.Collection] = None
-embedding_fn: Optional[SentenceTransformerEmbeddingFunction] = None
-
-
-async def _pull_model():
-    """Descarga el modelo Ollama si no está disponible localmente."""
-    try:
-        async with httpx.AsyncClient(timeout=600.0) as client:
-            logger.info(f"Descargando modelo Ollama: {OLLAMA_MODEL}...")
-            async with client.stream("POST", f"{OLLAMA_URL}/api/pull",
-                                     json={"name": OLLAMA_MODEL}) as resp:
-                async for line in resp.aiter_lines():
-                    if line:
-                        try:
-                            data = json.loads(line)
-                            if data.get("status") == "success":
-                                logger.info(f"Modelo {OLLAMA_MODEL} listo.")
-                        except Exception:
-                            pass
-    except Exception as e:
-        logger.warning(f"No se pudo descargar el modelo: {e}")
+embedding_fn: Optional[GeminiEmbeddingFunction] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global chroma_client_instance, chroma_main_collection, embedding_fn
-    logger.info("Iniciando servidor OECE-IA...")
 
-    import asyncio
-    asyncio.create_task(_pull_model())
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY no configurada. El servidor no podrá procesar solicitudes.")
+    else:
+        genai.configure(api_key=GEMINI_API_KEY)
+        logger.info(f"Gemini API configurada. Modelo: {GEMINI_MODEL} | Embedding: {GEMINI_EMBEDDING_MODEL}")
 
     try:
         chroma_client_instance = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-        embedding_fn = SentenceTransformerEmbeddingFunction(
-            model_name="paraphrase-multilingual-MiniLM-L12-v2"
-        )
+        embedding_fn = GeminiEmbeddingFunction()
         chroma_main_collection = chroma_client_instance.get_or_create_collection(
             name="contrataciones_oece",
             embedding_function=embedding_fn,
@@ -129,7 +133,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OECE-IA API",
     description="API del Asistente IA de Contrataciones Públicas - OECE Perú",
-    version="2.0.0",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -301,12 +305,52 @@ def _list_collection_docs(collection: chromadb.Collection, where: Optional[dict]
     return [DocumentInfoResponse(source=s, chunks=i["chunks"], file_hash=i["file_hash"]) for s, i in sorted(sources.items())]
 
 
+# ─── Llamadas a Gemini ────────────────────────────────────────────────────────
+
+def _build_gemini_history(messages: list[dict]) -> list[dict]:
+    """Convierte el historial al formato de Gemini (user/model)."""
+    history = []
+    for msg in messages:
+        role = "model" if msg["role"] == "assistant" else "user"
+        history.append({"role": role, "parts": [msg["content"]]})
+    return history
+
+
+async def _call_gemini(messages: list[dict]) -> str:
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY no configurada.")
+    model = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=SYSTEM_PROMPT,
+    )
+    history = _build_gemini_history(messages[:-1])
+    chat = model.start_chat(history=history)
+    response = await chat.send_message_async(messages[-1]["content"])
+    return response.text
+
+
+async def _stream_gemini(messages: list[dict]):
+    """Generador async de tokens desde Gemini."""
+    if not GEMINI_API_KEY:
+        yield "Error: GEMINI_API_KEY no configurada."
+        return
+    model = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=SYSTEM_PROMPT,
+    )
+    history = _build_gemini_history(messages[:-1])
+    chat = model.start_chat(history=history)
+    async for chunk in await chat.send_message_async(messages[-1]["content"], stream=True):
+        if chunk.text:
+            yield chunk.text
+
+
 # ─── Endpoints principales ────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     doc_count = chroma_main_collection.count() if chroma_main_collection else 0
-    return HealthResponse(status="ok", documents_in_db=doc_count, model=OLLAMA_MODEL)
+    return HealthResponse(status="ok", documents_in_db=doc_count, model=GEMINI_MODEL)
 
 
 def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str], int]:
@@ -369,30 +413,6 @@ def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str],
     return context_text, sources, user_sources, documents_found
 
 
-async def _call_ollama(messages: list[dict], retries: int = 2) -> str:
-    """Llama a Ollama con reintentos automáticos.
-
-    Presupuesto de tiempo: 2 intentos × 90s + 3s sleep = 183s < nginx proxy_read_timeout (240s).
-    """
-    import asyncio
-    last_error: Exception = RuntimeError("Sin respuesta de Ollama")
-    for attempt in range(retries):
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=5.0)) as client:
-                resp = await client.post(
-                    f"{OLLAMA_URL}/api/chat",
-                    json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
-                )
-                resp.raise_for_status()
-                return resp.json()["message"]["content"]
-        except Exception as e:
-            last_error = e
-            if attempt < retries - 1:
-                logger.warning(f"Ollama intento {attempt + 1} fallido: {e}. Reintentando en 3s...")
-                await asyncio.sleep(3)
-    raise last_error
-
-
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     context_text, sources, user_sources, documents_found = _build_rag_context(request)
@@ -402,12 +422,12 @@ async def chat(request: ChatRequest):
     messages.append({"role": "user", "content": user_content})
 
     try:
-        answer = await _call_ollama(
-            [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-        )
+        answer = await _call_gemini(messages)
         logger.info(f"Chat | user={request.user_id} | case={request.case_id} | docs={documents_found}")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error Ollama: {e}")
+        logger.error(f"Error Gemini: {e}")
         raise HTTPException(status_code=500, detail=f"Error al procesar: {str(e)}")
 
     return ChatResponse(response=answer, sources=sources, user_sources=user_sources, documents_found=documents_found)
@@ -415,7 +435,7 @@ async def chat(request: ChatRequest):
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """Endpoint SSE: devuelve tokens conforme Ollama los genera."""
+    """Endpoint SSE: devuelve tokens conforme Gemini los genera."""
     context_text, sources, _, documents_found = _build_rag_context(request)
 
     messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-6:]]
@@ -424,31 +444,12 @@ async def chat_stream(request: ChatRequest):
 
     async def generate():
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=5.0)) as client:
-                async with client.stream(
-                    "POST",
-                    f"{OLLAMA_URL}/api/chat",
-                    json={
-                        "model": OLLAMA_MODEL,
-                        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-                        "stream": True,
-                    },
-                ) as resp:
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                            token = data.get("message", {}).get("content", "")
-                            if token:
-                                yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
-                            if data.get("done"):
-                                yield f"data: {json.dumps({'done': True, 'sources': sources, 'documents_found': documents_found})}\n\n"
-                        except Exception:
-                            pass
+            async for token in _stream_gemini(messages):
+                yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'sources': sources, 'documents_found': documents_found})}\n\n"
             logger.info(f"Stream | user={request.user_id} | docs={documents_found}")
         except Exception as e:
-            logger.error(f"Error stream Ollama: {e}")
+            logger.error(f"Error stream Gemini: {e}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
