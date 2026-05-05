@@ -316,7 +316,9 @@ def _build_gemini_history(messages: list[dict]) -> list[dict]:
     return history
 
 
-async def _call_gemini(messages: list[dict]) -> str:
+async def _call_gemini(messages: list[dict], retries: int = 4) -> str:
+    """Llama a Gemini con reintentos exponenciales ante rate limit (429)."""
+    import asyncio
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=503, detail="GEMINI_API_KEY no configurada.")
     model = genai.GenerativeModel(
@@ -324,13 +326,27 @@ async def _call_gemini(messages: list[dict]) -> str:
         system_instruction=SYSTEM_PROMPT,
     )
     history = _build_gemini_history(messages[:-1])
-    chat = model.start_chat(history=history)
-    response = await chat.send_message_async(messages[-1]["content"])
-    return response.text
+    last_error: Exception = RuntimeError("Sin respuesta de Gemini")
+    for attempt in range(retries):
+        try:
+            chat = model.start_chat(history=history)
+            response = await chat.send_message_async(messages[-1]["content"])
+            return response.text
+        except Exception as e:
+            last_error = e
+            err_str = str(e).lower()
+            if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
+                wait = 2 ** attempt  # 1s, 2s, 4s, 8s
+                logger.warning(f"Gemini rate limit (intento {attempt + 1}). Reintentando en {wait}s...")
+                await asyncio.sleep(wait)
+            else:
+                break
+    raise last_error
 
 
 async def _stream_gemini(messages: list[dict]):
-    """Generador async de tokens desde Gemini."""
+    """Generador async de tokens desde Gemini con reintento simple ante rate limit."""
+    import asyncio
     if not GEMINI_API_KEY:
         yield "Error: GEMINI_API_KEY no configurada."
         return
@@ -339,10 +355,21 @@ async def _stream_gemini(messages: list[dict]):
         system_instruction=SYSTEM_PROMPT,
     )
     history = _build_gemini_history(messages[:-1])
-    chat = model.start_chat(history=history)
-    async for chunk in await chat.send_message_async(messages[-1]["content"], stream=True):
-        if chunk.text:
-            yield chunk.text
+    for attempt in range(3):
+        try:
+            chat = model.start_chat(history=history)
+            async for chunk in await chat.send_message_async(messages[-1]["content"], stream=True):
+                if chunk.text:
+                    yield chunk.text
+            return
+        except Exception as e:
+            err_str = str(e).lower()
+            if ("429" in err_str or "quota" in err_str or "resource_exhausted" in err_str) and attempt < 2:
+                wait = 2 ** attempt
+                logger.warning(f"Gemini stream rate limit (intento {attempt + 1}). Reintentando en {wait}s...")
+                await asyncio.sleep(wait)
+            else:
+                raise
 
 
 # ─── Endpoints principales ────────────────────────────────────────────────────
