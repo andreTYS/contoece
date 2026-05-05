@@ -1,0 +1,35 @@
+# Variables de entorno (nunca al repositorio)
+.env
+
+# Servidor Python
+server/venv/
+server/chroma_db/
+server/__pycache__/
+server/*.pyc
+server/.env
+
+# Flutter
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/build/
+app/.packages
+app/pubspec.lock
+
+# Android
+app/android/.gradle/
+app/android/captures/
+app/android/local.properties
+app/android/app/google-services.json  # SENSIBLE - configura el tuyo localmente
+
+# iOS
+app/ios/Pods/
+app/ios/.symlinks/
+app/ios/Flutter/flutter_export_environment.sh
+
+# Firebase (el archivo en el repo es un placeholder - reemplazar localmente con flutterfire configure)
+# app/lib/firebase_options.dart
+
+# OS
+.DS_Store
+*.log
