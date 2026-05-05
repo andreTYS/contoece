@@ -1,16 +1,13 @@
 """
 OECE-IA - Script de Ingestión de Documentos
 ============================================
-Carga documentos (PDF, DOCX, TXT) en la base de datos vectorial (ChromaDB)
-usando Gemini text-embedding-004 para que la IA pueda usarlos como contexto.
+Carga documentos (PDF, DOCX, TXT) en ChromaDB usando Gemini text-embedding-004.
 
 USO:
     python ingest.py                    # Ingesta todos los archivos en ./data/
     python ingest.py archivo.pdf        # Ingesta un archivo específico
     python ingest.py --clear            # Limpia la base y reinicia
     python ingest.py --list             # Lista los documentos en la base
-
-FORMATOS SOPORTADOS: PDF, DOCX, TXT
 """
 
 import argparse
@@ -22,33 +19,31 @@ import uuid
 from pathlib import Path
 
 import chromadb
-import google.generativeai as genai
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("ingest")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY         = os.getenv("GEMINI_API_KEY", "")
 GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
-CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
-DATA_DIR = os.getenv("DATA_DIR", "./data")
-CHUNK_SIZE = 800
+CHROMA_DB_PATH         = os.getenv("CHROMA_DB_PATH", "./chroma_db")
+DATA_DIR               = os.getenv("DATA_DIR", "./data")
+CHUNK_SIZE   = 800
 CHUNK_OVERLAP = 150
 
 if not GEMINI_API_KEY:
-    logger.error("GEMINI_API_KEY no configurada. Configura la variable de entorno antes de ejecutar.")
+    logger.error("GEMINI_API_KEY no configurada.")
     sys.exit(1)
 
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 
-# ─── Embedding con Gemini ─────────────────────────────────────────────────────
+# ─── Embedding ────────────────────────────────────────────────────────────────
 
 class GeminiEmbeddingFunction(EmbeddingFunction):
     _BATCH_SIZE = 100
@@ -58,105 +53,87 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
             return []
         all_embeddings: Embeddings = []
         for i in range(0, len(input), self._BATCH_SIZE):
-            batch = input[i : i + self._BATCH_SIZE]
-            result = genai.embed_content(
+            batch = list(input[i : i + self._BATCH_SIZE])
+            result = client.models.embed_content(
                 model=GEMINI_EMBEDDING_MODEL,
-                content=batch,
-                task_type="retrieval_document",
+                contents=batch,
+                config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
             )
-            all_embeddings.extend(result["embedding"])
+            all_embeddings.extend([e.values for e in result.embeddings])
         return all_embeddings
 
 
 # ─── Lectura de documentos ────────────────────────────────────────────────────
 
-def read_pdf(path: Path) -> str:
-    try:
-        import pdfplumber
-        text_parts = []
-        with pdfplumber.open(str(path)) as pdf:
-            for i, page in enumerate(pdf.pages):
-                text = page.extract_text()
-                if text:
-                    text_parts.append(f"[Página {i + 1}]\n{text.strip()}")
-        return "\n\n".join(text_parts)
-    except ImportError:
-        logger.error("pdfplumber no instalado. Instala con: pip install pdfplumber")
-        return ""
-    except Exception as e:
-        logger.error(f"Error al leer PDF {path}: {e}")
-        return ""
-
-
-def read_docx(path: Path) -> str:
-    try:
-        from docx import Document
-        doc = Document(str(path))
-        paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-        return "\n\n".join(paragraphs)
-    except ImportError:
-        logger.error("python-docx no instalado. Instala con: pip install python-docx")
-        return ""
-    except Exception as e:
-        logger.error(f"Error al leer DOCX {path}: {e}")
-        return ""
-
-
-def read_txt(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8", errors="ignore")
-    except Exception as e:
-        logger.error(f"Error al leer TXT {path}: {e}")
-        return ""
-
-
 def read_document(path: Path) -> str:
     ext = path.suffix.lower()
     if ext == ".pdf":
-        return read_pdf(path)
+        try:
+            import pdfplumber
+            parts = []
+            with pdfplumber.open(str(path)) as pdf:
+                for i, page in enumerate(pdf.pages):
+                    text = page.extract_text()
+                    if text:
+                        parts.append(f"[Página {i + 1}]\n{text.strip()}")
+            return "\n\n".join(parts)
+        except Exception as e:
+            logger.error(f"Error leyendo PDF {path}: {e}")
+            return ""
     elif ext == ".docx":
-        return read_docx(path)
+        try:
+            from docx import Document
+            doc = Document(str(path))
+            return "\n\n".join(p.text.strip() for p in doc.paragraphs if p.text.strip())
+        except Exception as e:
+            logger.error(f"Error leyendo DOCX {path}: {e}")
+            return ""
     elif ext in (".txt", ".md"):
-        return read_txt(path)
-    else:
-        logger.warning(f"Formato no soportado: {ext} ({path.name})")
-        return ""
+        return path.read_text(encoding="utf-8", errors="ignore")
+    logger.warning(f"Formato no soportado: {path.suffix}")
+    return ""
 
 
-# ─── Chunking ─────────────────────────────────────────────────────────────────
-
-def split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
-    if len(text) <= chunk_size:
+def split_text(text: str) -> list[str]:
+    if len(text) <= CHUNK_SIZE:
         return [text]
-
-    chunks = []
-    start = 0
+    chunks, start = [], 0
     while start < len(text):
-        end = start + chunk_size
+        end = start + CHUNK_SIZE
         if end < len(text):
             for sep in ["\n\n", "\n", ". ", " "]:
                 idx = text.rfind(sep, start, end)
-                if idx > start + chunk_size // 2:
+                if idx > start + CHUNK_SIZE // 2:
                     end = idx + len(sep)
                     break
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
-        start = end - overlap
-
+        start = end - CHUNK_OVERLAP
     return chunks
 
 
-# ─── Ingestión ────────────────────────────────────────────────────────────────
+# ─── Colección ────────────────────────────────────────────────────────────────
 
 def get_collection() -> chromadb.Collection:
     chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
     emb_fn = GeminiEmbeddingFunction()
-    return chroma_client.get_or_create_collection(
-        name="contrataciones_oece",
-        embedding_function=emb_fn,
-        metadata={"hnsw:space": "cosine"},
-    )
+    try:
+        return chroma_client.get_or_create_collection(
+            name="contrataciones_oece",
+            embedding_function=emb_fn,
+            metadata={"hnsw:space": "cosine"},
+        )
+    except ValueError as e:
+        if "conflict" in str(e).lower() or "embedding function" in str(e).lower():
+            logger.warning("Conflicto de embedding. Recreando colección...")
+            chroma_client.delete_collection("contrataciones_oece")
+            return chroma_client.create_collection(
+                name="contrataciones_oece",
+                embedding_function=emb_fn,
+                metadata={"hnsw:space": "cosine"},
+            )
+        raise
 
 
 def file_hash(path: Path) -> str:
@@ -168,7 +145,6 @@ def file_hash(path: Path) -> str:
 
 
 def ingest_file(path: Path, collection: chromadb.Collection, force: bool = False) -> int:
-    path = Path(path)
     if not path.exists():
         logger.error(f"Archivo no encontrado: {path}")
         return 0
@@ -179,12 +155,10 @@ def ingest_file(path: Path, collection: chromadb.Collection, force: bool = False
     if not force:
         existing = collection.get(where={"file_hash": fhash})
         if existing["ids"]:
-            logger.info(f"'{source_name}' ya está en la base (hash: {fhash[:8]}...). Omitiendo.")
+            logger.info(f"'{source_name}' ya está en la base. Omitiendo.")
             return 0
 
-    logger.info(f"Leyendo: {source_name}")
     text = read_document(path)
-
     if not text.strip():
         logger.warning(f"'{source_name}' no tiene texto extraíble.")
         return 0
@@ -196,23 +170,13 @@ def ingest_file(path: Path, collection: chromadb.Collection, force: bool = False
         old = collection.get(where={"source": source_name})
         if old["ids"]:
             collection.delete(ids=old["ids"])
-            logger.info(f"Eliminada versión anterior: {len(old['ids'])} chunks")
     except Exception:
         pass
 
     ids = [str(uuid.uuid4()) for _ in chunks]
-    metadatas = [
-        {
-            "source": source_name,
-            "file_hash": fhash,
-            "chunk_index": i,
-            "total_chunks": len(chunks),
-        }
-        for i in range(len(chunks))
-    ]
-
+    metadatas = [{"source": source_name, "file_hash": fhash, "chunk_index": i, "total_chunks": len(chunks)} for i in range(len(chunks))]
     collection.add(documents=chunks, ids=ids, metadatas=metadatas)
-    logger.info(f"'{source_name}' ingestado: {len(chunks)} chunks añadidos.")
+    logger.info(f"'{source_name}' ingestado: {len(chunks)} chunks.")
     return len(chunks)
 
 
@@ -221,75 +185,48 @@ def ingest_directory(data_dir: str = DATA_DIR, force: bool = False) -> None:
     if not data_path.exists():
         logger.error(f"Directorio no encontrado: {data_dir}")
         return
-
-    supported = (".pdf", ".docx", ".txt", ".md")
-    files = [f for f in data_path.iterdir() if f.suffix.lower() in supported]
-
+    files = [f for f in data_path.iterdir() if f.suffix.lower() in (".pdf", ".docx", ".txt", ".md")]
     if not files:
         logger.warning(f"No se encontraron archivos en '{data_dir}'.")
-        logger.info("Coloca tus archivos PDF, DOCX o TXT en la carpeta 'data/'")
         return
-
-    logger.info(f"Encontrados {len(files)} archivos en '{data_dir}'")
     collection = get_collection()
-
-    total_chunks = 0
-    for f in sorted(files):
-        total_chunks += ingest_file(f, collection, force=force)
-
-    logger.info(f"\nIngestión completa. Total chunks añadidos: {total_chunks}")
-    logger.info(f"Total documentos en la base: {collection.count()}")
+    total = sum(ingest_file(f, collection, force=force) for f in sorted(files))
+    logger.info(f"Ingestión completa. Chunks añadidos: {total} | Total en base: {collection.count()}")
 
 
 def list_documents() -> None:
     collection = get_collection()
-    total = collection.count()
-    if total == 0:
-        print("La base de datos está vacía. Usa 'python ingest.py' para cargar documentos.")
+    if collection.count() == 0:
+        print("Base vacía.")
         return
-
-    all_items = collection.get(include=["metadatas"])
     sources: dict[str, int] = {}
-    for meta in all_items["metadatas"]:
+    for meta in collection.get(include=["metadatas"])["metadatas"]:
         src = meta.get("source", "desconocido")
         sources[src] = sources.get(src, 0) + 1
-
-    print(f"\nDocumentos en la base OECE-IA ({total} chunks total):")
-    print("-" * 50)
+    print(f"\nDocumentos ({collection.count()} chunks total):")
     for src, count in sorted(sources.items()):
         print(f"  {src}: {count} chunks")
-    print("-" * 50)
 
 
 def clear_database() -> None:
-    confirm = input("¿Estás seguro de que deseas borrar TODA la base? (escribe 'SI' para confirmar): ")
-    if confirm.strip().upper() != "SI":
-        print("Operación cancelada.")
+    if input("¿Borrar TODA la base? (escribe 'SI'): ").strip().upper() != "SI":
+        print("Cancelado.")
         return
-
     chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
     try:
         chroma_client.delete_collection("contrataciones_oece")
-        logger.info("Base de datos eliminada correctamente.")
+        logger.info("Base eliminada.")
     except Exception as e:
-        logger.error(f"Error al eliminar colección: {e}")
+        logger.error(f"Error: {e}")
 
 
-# ─── CLI ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="OECE-IA - Ingestión de documentos en base vectorial (Gemini embeddings)"
-    )
-    parser.add_argument(
-        "file",
-        nargs="?",
-        help="Ruta a un archivo específico para ingestar (PDF, DOCX, TXT)",
-    )
-    parser.add_argument("--clear", action="store_true", help="Limpia toda la base de datos vectorial")
-    parser.add_argument("--list", action="store_true", help="Lista los documentos en la base de datos")
-    parser.add_argument("--force", action="store_true", help="Re-ingesta aunque el archivo ya exista")
-    parser.add_argument("--dir", default=DATA_DIR, help=f"Directorio a ingestar (default: {DATA_DIR})")
-
+    parser = argparse.ArgumentParser(description="OECE-IA - Ingestión de documentos")
+    parser.add_argument("file", nargs="?", help="Archivo a ingestar")
+    parser.add_argument("--clear", action="store_true")
+    parser.add_argument("--list", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--dir", default=DATA_DIR)
     args = parser.parse_args()
 
     if args.clear:
@@ -297,8 +234,7 @@ if __name__ == "__main__":
     elif args.list:
         list_documents()
     elif args.file:
-        collection = get_collection()
-        ingest_file(Path(args.file), collection, force=args.force)
-        logger.info(f"Total en base: {collection.count()}")
+        col = get_collection()
+        ingest_file(Path(args.file), col, force=args.force)
     else:
         ingest_directory(data_dir=args.dir, force=args.force)

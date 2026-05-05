@@ -1,8 +1,9 @@
 """
 OECE-IA - Servidor de IA para Contrataciones Públicas del Estado Peruano
-Desarrollado con FastAPI + Gemini API (LLM + embeddings) + ChromaDB (RAG)
+Desarrollado con FastAPI + Gemini API (google-genai) + ChromaDB (RAG)
 """
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -15,12 +16,13 @@ from typing import Optional
 
 import chromadb
 import json
-import google.generativeai as genai
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 
 load_dotenv()
@@ -28,12 +30,12 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("oece-ia")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_API_KEY        = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL          = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
-CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
-CHUNK_SIZE = 800
+CHROMA_DB_PATH        = os.getenv("CHROMA_DB_PATH", "./chroma_db")
+ALLOWED_ORIGINS       = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+CHUNK_SIZE   = 800
 CHUNK_OVERLAP = 150
 
 SYSTEM_PROMPT = """Eres **OECE-IA**, el asistente virtual oficial especializado en contrataciones públicas del Estado peruano, desarrollado para apoyar a funcionarios, servidores públicos y proveedores del Estado.
@@ -76,25 +78,29 @@ Proporcionar información precisa, confiable y actualizada sobre el sistema de c
 - Soporte técnico de esta app: WhatsApp +51 910 561 256
 """
 
+# ─── Cliente Gemini global ────────────────────────────────────────────────────
+gemini_client: Optional[genai.Client] = None
+
+
 # ─── Embedding con Gemini ─────────────────────────────────────────────────────
 
 class GeminiEmbeddingFunction(EmbeddingFunction):
-    """Función de embedding usando Gemini text-embedding-004."""
+    """Embedding sincrónico usando Gemini text-embedding-004 (requerido por ChromaDB)."""
 
-    _BATCH_SIZE = 100  # límite de la API de Gemini
+    _BATCH_SIZE = 100
 
     def __call__(self, input: Documents) -> Embeddings:
-        if not input:
+        if not input or not gemini_client:
             return []
         all_embeddings: Embeddings = []
         for i in range(0, len(input), self._BATCH_SIZE):
-            batch = input[i : i + self._BATCH_SIZE]
-            result = genai.embed_content(
+            batch = list(input[i : i + self._BATCH_SIZE])
+            result = gemini_client.models.embed_content(
                 model=GEMINI_EMBEDDING_MODEL,
-                content=batch,
-                task_type="retrieval_document",
+                contents=batch,
+                config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
             )
-            all_embeddings.extend(result["embedding"])
+            all_embeddings.extend([e.values for e in result.embeddings])
         return all_embeddings
 
 
@@ -104,25 +110,41 @@ chroma_main_collection: Optional[chromadb.Collection] = None
 embedding_fn: Optional[GeminiEmbeddingFunction] = None
 
 
+def _init_collection(client: chromadb.PersistentClient, emb_fn: GeminiEmbeddingFunction, name: str) -> chromadb.Collection:
+    """Obtiene o crea una colección; si hay conflicto de embedding la recrea vacía."""
+    try:
+        return client.get_or_create_collection(
+            name=name,
+            embedding_function=emb_fn,
+            metadata={"hnsw:space": "cosine"},
+        )
+    except ValueError as e:
+        if "conflict" in str(e).lower() or "embedding function" in str(e).lower():
+            logger.warning(f"Conflicto de embedding en '{name}'. Recreando colección (se pierden los documentos anteriores)...")
+            client.delete_collection(name)
+            return client.create_collection(
+                name=name,
+                embedding_function=emb_fn,
+                metadata={"hnsw:space": "cosine"},
+            )
+        raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global chroma_client_instance, chroma_main_collection, embedding_fn
+    global gemini_client, chroma_client_instance, chroma_main_collection, embedding_fn
 
     if not GEMINI_API_KEY:
-        logger.error("GEMINI_API_KEY no configurada. El servidor no podrá procesar solicitudes.")
+        logger.error("GEMINI_API_KEY no configurada.")
     else:
-        genai.configure(api_key=GEMINI_API_KEY)
-        logger.info(f"Gemini API configurada. Modelo: {GEMINI_MODEL} | Embedding: {GEMINI_EMBEDDING_MODEL}")
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        logger.info(f"Gemini configurado. Modelo: {GEMINI_MODEL} | Embedding: {GEMINI_EMBEDDING_MODEL}")
 
     try:
         chroma_client_instance = chromadb.PersistentClient(path=CHROMA_DB_PATH)
         embedding_fn = GeminiEmbeddingFunction()
-        chroma_main_collection = chroma_client_instance.get_or_create_collection(
-            name="contrataciones_oece",
-            embedding_function=embedding_fn,
-            metadata={"hnsw:space": "cosine"},
-        )
-        logger.info(f"ChromaDB inicializado. Docs principales: {chroma_main_collection.count()}")
+        chroma_main_collection = _init_collection(chroma_client_instance, embedding_fn, "contrataciones_oece")
+        logger.info(f"ChromaDB listo. Documentos: {chroma_main_collection.count()}")
     except Exception as e:
         logger.error(f"Error ChromaDB: {e}")
 
@@ -133,7 +155,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OECE-IA API",
     description="API del Asistente IA de Contrataciones Públicas - OECE Perú",
-    version="3.0.0",
+    version="3.1.0",
     lifespan=lifespan,
 )
 
@@ -187,19 +209,13 @@ def _get_user_collection(user_id: str) -> Optional[chromadb.Collection]:
     if not user_id or user_id == "anonymous":
         return None
     safe_uid = re.sub(r"[^a-zA-Z0-9_-]", "_", user_id)[:40]
-    col_name = f"u_{safe_uid}"
-    return chroma_client_instance.get_or_create_collection(
-        name=col_name,
-        embedding_function=embedding_fn,
-        metadata={"hnsw:space": "cosine"},
-    )
+    return _init_collection(chroma_client_instance, embedding_fn, f"u_{safe_uid}")
 
 
 def _split_text(text: str) -> list[str]:
     if len(text) <= CHUNK_SIZE:
         return [text.strip()] if text.strip() else []
-    chunks = []
-    start = 0
+    chunks, start = [], 0
     while start < len(text):
         end = start + CHUNK_SIZE
         if end < len(text):
@@ -247,13 +263,7 @@ def _file_hash(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
 
-def _ingest_to_collection(
-    collection: chromadb.Collection,
-    file_bytes: bytes,
-    file_name: str,
-    ext: str,
-    extra_meta: dict,
-) -> dict:
+def _ingest_to_collection(collection, file_bytes, file_name, ext, extra_meta):
     fhash = _file_hash(file_bytes)
     existing = collection.get(where={"file_hash": fhash})
     if existing["ids"]:
@@ -262,7 +272,6 @@ def _ingest_to_collection(
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         tmp.write(file_bytes)
         tmp_path = Path(tmp.name)
-
     try:
         text = _read_file(tmp_path)
     finally:
@@ -288,15 +297,14 @@ def _ingest_to_collection(
     return {"message": f"'{file_name}' ingestado.", "chunks_added": len(chunks), "source": file_name}
 
 
-def _list_collection_docs(collection: chromadb.Collection, where: Optional[dict] = None) -> list[DocumentInfoResponse]:
-    total = collection.count()
-    if total == 0:
+def _list_collection_docs(collection, where=None):
+    if collection.count() == 0:
         return []
     kwargs = {"include": ["metadatas"]}
     if where:
         kwargs["where"] = where
     all_items = collection.get(**kwargs)
-    sources: dict[str, dict] = {}
+    sources: dict = {}
     for meta in all_items["metadatas"]:
         src = meta.get("source", "desconocido")
         if src not in sources:
@@ -307,36 +315,33 @@ def _list_collection_docs(collection: chromadb.Collection, where: Optional[dict]
 
 # ─── Llamadas a Gemini ────────────────────────────────────────────────────────
 
-def _build_gemini_history(messages: list[dict]) -> list[dict]:
-    """Convierte el historial al formato de Gemini (user/model)."""
+def _to_gemini_history(messages: list[dict]) -> list[types.Content]:
     history = []
     for msg in messages:
         role = "model" if msg["role"] == "assistant" else "user"
-        history.append({"role": role, "parts": [msg["content"]]})
+        history.append(types.Content(role=role, parts=[types.Part(text=msg["content"])]))
     return history
 
 
 async def _call_gemini(messages: list[dict], retries: int = 4) -> str:
-    """Llama a Gemini con reintentos exponenciales ante rate limit (429)."""
-    import asyncio
-    if not GEMINI_API_KEY:
+    if not gemini_client:
         raise HTTPException(status_code=503, detail="GEMINI_API_KEY no configurada.")
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=SYSTEM_PROMPT,
-    )
-    history = _build_gemini_history(messages[:-1])
+    history = _to_gemini_history(messages[:-1])
     last_error: Exception = RuntimeError("Sin respuesta de Gemini")
     for attempt in range(retries):
         try:
-            chat = model.start_chat(history=history)
-            response = await chat.send_message_async(messages[-1]["content"])
+            chat = gemini_client.aio.chats.create(
+                model=GEMINI_MODEL,
+                config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+                history=history,
+            )
+            response = await chat.send_message(messages[-1]["content"])
             return response.text
         except Exception as e:
             last_error = e
             err_str = str(e).lower()
             if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
-                wait = 2 ** attempt  # 1s, 2s, 4s, 8s
+                wait = 2 ** attempt
                 logger.warning(f"Gemini rate limit (intento {attempt + 1}). Reintentando en {wait}s...")
                 await asyncio.sleep(wait)
             else:
@@ -345,20 +350,18 @@ async def _call_gemini(messages: list[dict], retries: int = 4) -> str:
 
 
 async def _stream_gemini(messages: list[dict]):
-    """Generador async de tokens desde Gemini con reintento simple ante rate limit."""
-    import asyncio
-    if not GEMINI_API_KEY:
+    if not gemini_client:
         yield "Error: GEMINI_API_KEY no configurada."
         return
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=SYSTEM_PROMPT,
-    )
-    history = _build_gemini_history(messages[:-1])
+    history = _to_gemini_history(messages[:-1])
     for attempt in range(3):
         try:
-            chat = model.start_chat(history=history)
-            async for chunk in await chat.send_message_async(messages[-1]["content"], stream=True):
+            chat = gemini_client.aio.chats.create(
+                model=GEMINI_MODEL,
+                config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+                history=history,
+            )
+            async for chunk in await chat.send_message_stream(messages[-1]["content"]):
                 if chunk.text:
                     yield chunk.text
             return
@@ -372,7 +375,7 @@ async def _stream_gemini(messages: list[dict]):
                 raise
 
 
-# ─── Endpoints principales ────────────────────────────────────────────────────
+# ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -381,11 +384,7 @@ async def health_check():
 
 
 def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str], int]:
-    """Consulta ChromaDB y devuelve contexto, fuentes y conteo de documentos."""
-    context_text = ""
-    sources: list[str] = []
-    user_sources: list[str] = []
-    documents_found = 0
+    context_text, sources, user_sources, documents_found = "", [], [], 0
 
     if chroma_main_collection and chroma_main_collection.count() > 0:
         try:
@@ -397,7 +396,7 @@ def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str],
             docs = results.get("documents", [[]])[0]
             metas = results.get("metadatas", [[]])[0]
             distances = results.get("distances", [[]])[0]
-            relevant = [(doc, meta) for doc, meta, dist in zip(docs, metas, distances) if dist < 0.6]
+            relevant = [(d, m) for d, m, dist in zip(docs, metas, distances) if dist < 0.6]
             if relevant:
                 documents_found += len(relevant)
                 context_text = "\n\n---\n**INFORMACION DE LA BASE DE CONOCIMIENTOS OECE:**\n"
@@ -421,10 +420,10 @@ def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str],
             }
             if request.case_id:
                 q_kwargs["where"] = {"case_id": request.case_id}
-            user_results = user_col.query(**q_kwargs)
-            u_docs = user_results.get("documents", [[]])[0]
-            u_metas = user_results.get("metadatas", [[]])[0]
-            u_distances = user_results.get("distances", [[]])[0]
+            u_results = user_col.query(**q_kwargs)
+            u_docs = u_results.get("documents", [[]])[0]
+            u_metas = u_results.get("metadatas", [[]])[0]
+            u_distances = u_results.get("distances", [[]])[0]
             u_relevant = [(d, m) for d, m, dist in zip(u_docs, u_metas, u_distances) if dist < 0.65]
             if u_relevant:
                 documents_found += len(u_relevant)
@@ -443,11 +442,8 @@ def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str],
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     context_text, sources, user_sources, documents_found = _build_rag_context(request)
-
     messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-6:]]
-    user_content = request.message + (context_text if context_text else "")
-    messages.append({"role": "user", "content": user_content})
-
+    messages.append({"role": "user", "content": request.message + (context_text or "")})
     try:
         answer = await _call_gemini(messages)
         logger.info(f"Chat | user={request.user_id} | case={request.case_id} | docs={documents_found}")
@@ -455,19 +451,15 @@ async def chat(request: ChatRequest):
         raise
     except Exception as e:
         logger.error(f"Error Gemini: {e}")
-        raise HTTPException(status_code=500, detail=f"Error al procesar: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=str(e))
     return ChatResponse(response=answer, sources=sources, user_sources=user_sources, documents_found=documents_found)
 
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """Endpoint SSE: devuelve tokens conforme Gemini los genera."""
     context_text, sources, _, documents_found = _build_rag_context(request)
-
     messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-6:]]
-    user_content = request.message + (context_text if context_text else "")
-    messages.append({"role": "user", "content": user_content})
+    messages.append({"role": "user", "content": request.message + (context_text or "")})
 
     async def generate():
         try:
@@ -489,7 +481,7 @@ async def get_stats():
     return {"total_documents": chroma_main_collection.count(), "collection_name": chroma_main_collection.name}
 
 
-# ─── Endpoints Admin (colección principal) ───────────────────────────────────
+# ─── Admin ────────────────────────────────────────────────────────────────────
 
 @app.get("/admin/documents", response_model=list[DocumentInfoResponse])
 async def list_documents():
@@ -502,9 +494,8 @@ async def list_documents():
 async def upload_document(file: UploadFile = File(...)):
     if not chroma_main_collection:
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    allowed_ext = {".pdf", ".docx", ".txt", ".md"}
     ext = Path(file.filename or "").suffix.lower()
-    if ext not in allowed_ext:
+    if ext not in {".pdf", ".docx", ".txt", ".md"}:
         raise HTTPException(status_code=400, detail=f"Formato no soportado: {ext}")
     file_bytes = await file.read()
     source_name = file.filename or f"documento_{uuid.uuid4().hex[:8]}{ext}"
@@ -529,7 +520,7 @@ async def delete_document(source_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Endpoints Usuario (colección personal) ───────────────────────────────────
+# ─── Usuario ──────────────────────────────────────────────────────────────────
 
 @app.get("/user/documents", response_model=list[DocumentInfoResponse])
 async def list_user_documents(user_id: str, case_id: str = ""):
@@ -538,29 +529,22 @@ async def list_user_documents(user_id: str, case_id: str = ""):
     col = _get_user_collection(user_id)
     if not col or col.count() == 0:
         return []
-    where = {"case_id": case_id} if case_id else None
-    return _list_collection_docs(col, where=where)
+    return _list_collection_docs(col, where={"case_id": case_id} if case_id else None)
 
 
 @app.post("/user/upload")
-async def upload_user_document(
-    user_id: str = Form(...),
-    case_id: str = Form(""),
-    file: UploadFile = File(...),
-):
+async def upload_user_document(user_id: str = Form(...), case_id: str = Form(""), file: UploadFile = File(...)):
     if not user_id or user_id == "anonymous":
         raise HTTPException(status_code=400, detail="user_id requerido")
-    allowed_ext = {".pdf", ".docx", ".txt", ".md"}
     ext = Path(file.filename or "").suffix.lower()
-    if ext not in allowed_ext:
+    if ext not in {".pdf", ".docx", ".txt", ".md"}:
         raise HTTPException(status_code=400, detail=f"Formato no soportado: {ext}")
     col = _get_user_collection(user_id)
     if not col:
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
     file_bytes = await file.read()
     source_name = file.filename or f"archivo_{uuid.uuid4().hex[:8]}{ext}"
-    extra = {"case_id": case_id, "user_id": user_id}
-    result = _ingest_to_collection(col, file_bytes, source_name, ext, extra)
+    result = _ingest_to_collection(col, file_bytes, source_name, ext, {"case_id": case_id, "user_id": user_id})
     logger.info(f"User upload: uid={user_id} case={case_id} '{source_name}' -> {result['chunks_added']} chunks")
     return result
 
