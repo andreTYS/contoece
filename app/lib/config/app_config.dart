@@ -39,4 +39,18 @@ class AppConfig {
   static const List<String> adminEmails = [
     'andretys1000@gmail.com',
   ];
+
+  // Dominios de correo autorizados para acceder a la aplicación.
+  // Si la lista está vacía, se permite cualquier dominio.
+  static const List<String> allowedDomains = [
+    'oece.gob.pe',
+    'contrataciones.gob.pe',
+    'gmail.com', // temporal: permite cuentas de prueba
+  ];
+
+  static bool isEmailAllowed(String email) {
+    if (allowedDomains.isEmpty) return true;
+    final domain = email.split('@').last.toLowerCase();
+    return allowedDomains.contains(domain);
+  }
 }

@@ -23,12 +23,23 @@ class AuthService {
     try {
       final googleUser = await _googleSignIn!.signIn();
       if (googleUser == null) return null;
+
+      if (!AppConfig.isEmailAllowed(googleUser.email)) {
+        await _googleSignIn!.signOut();
+        throw Exception(
+          'Acceso no autorizado. Solo se permiten cuentas institucionales '
+          '(${AppConfig.allowedDomains.join(", ")}).',
+        );
+      }
+
       final googleAuth = await googleUser.authentication;
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
       return await _auth!.signInWithCredential(credential);
+    } on Exception {
+      rethrow;
     } catch (e) {
       throw Exception('Error al iniciar sesión con Google: $e');
     }

@@ -73,16 +73,96 @@ class _RoleGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final email = user.email ?? '';
+
+    if (!AppConfig.isEmailAllowed(email)) {
+      return _UnauthorizedScreen(email: email);
+    }
+
     final role = AppConfig.adminEmails.contains(email.toLowerCase())
         ? 'admin'
         : 'user';
-    // Guarda el perfil en Firestore en segundo plano (para panel de usuarios)
     FirestoreService().ensureUserProfile(
       uid: user.uid,
       email: email,
       displayName: user.displayName ?? email,
     );
     return ChatScreen(role: role);
+  }
+}
+
+class _UnauthorizedScreen extends StatelessWidget {
+  final String email;
+  const _UnauthorizedScreen({required this.email});
+
+  Future<void> _signOut(BuildContext context) async {
+    await AuthService().signOut();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.primaryBlue,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.block, color: Colors.white, size: 48),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Acceso no autorizado',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'La cuenta $email no pertenece a un dominio institucional autorizado.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.75),
+                  fontSize: 14,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Dominios permitidos: ${AppConfig.allowedDomains.join(", ")}',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.5),
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 32),
+              ElevatedButton.icon(
+                onPressed: () => _signOut(context),
+                icon: const Icon(Icons.logout),
+                label: const Text('Cerrar sesión'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: AppTheme.primaryBlue,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24, vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
