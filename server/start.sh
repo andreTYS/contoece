@@ -13,18 +13,18 @@ echo ""
 # Verificar que existe el .env
 if [ ! -f ".env" ]; then
     echo "⚠️  Archivo .env no encontrado."
-    echo "   Copia .env.example a .env y configura tu ANTHROPIC_API_KEY"
+    echo "   Copia .env.example a .env y configura tu GEMINI_API_KEY"
     echo ""
     echo "   cp .env.example .env"
-    echo "   nano .env   # (o usa cualquier editor)"
+    echo "   nano .env"
     exit 1
 fi
 
-# Verificar que ANTHROPIC_API_KEY está configurada
+# Verificar que GEMINI_API_KEY está configurada
 source .env
-if [ -z "$ANTHROPIC_API_KEY" ] || [ "$ANTHROPIC_API_KEY" = "sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXX" ]; then
-    echo "❌ ANTHROPIC_API_KEY no configurada en .env"
-    echo "   Obtén tu clave en: https://console.anthropic.com"
+if [ -z "$GEMINI_API_KEY" ] || [ "$GEMINI_API_KEY" = "AIzaSy-XXXXXXXXXXXXXXXXXXXXXXXXXX" ]; then
+    echo "❌ GEMINI_API_KEY no configurada en .env"
+    echo "   Obtén tu clave en: https://aistudio.google.com/app/apikey"
     exit 1
 fi
 
