@@ -1070,7 +1070,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildCasesDrawer() {
     return Drawer(
-      backgroundColor: const AppTheme.black,
+      backgroundColor: AppTheme.black,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1198,9 +1198,9 @@ class _ChatScreenState extends State<ChatScreen> {
       margin: const EdgeInsets.symmetric(vertical: 2),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: const AppTheme.background,
+        color: AppTheme.background,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const AppTheme.lightSilver),
+        border: Border.all(color: AppTheme.lightSilver),
       ),
       child: Row(children: [
         Container(
