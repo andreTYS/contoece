@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../config/app_config.dart';
@@ -9,6 +10,7 @@ import '../services/admin_service.dart';
 import '../services/auth_service.dart';
 import '../services/chat_service.dart' show ChatService, ChatResponse, RateLimitException;
 import '../services/firestore_service.dart';
+import '../services/user_doc_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/chat_bubble.dart';
 import 'login_screen.dart';
@@ -31,6 +33,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final ChatService _chatService = ChatService();
   final FirestoreService _firestoreService = FirestoreService();
   final AdminService _adminService = AdminService();
+  final UserDocService _userDocService = UserDocService();
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocus = FocusNode();
@@ -38,8 +41,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   List<ChatMessage> _messages = [];
   List<DocumentInfo> _sources = [];
+  List<DocumentInfo> _userDocs = [];
   List<CaseModel> _cases = [];
   bool _isLoading = false;
+  bool _isUploadingDoc = false;
   bool _serverConnected = false;
   bool _historyLoaded = false;
   bool _casesLoaded = false;
@@ -67,6 +72,200 @@ class _ChatScreenState extends State<ChatScreen> {
     _loadSources();
     _subscribeToCases();
     _loadHistory();
+  }
+
+  Future<void> _loadUserDocs() async {
+    if (_activeCaseId == null) { setState(() => _userDocs = []); return; }
+    final docs = await _userDocService.listDocuments(_uid, caseId: _activeCaseId!);
+    if (mounted) setState(() => _userDocs = docs);
+  }
+
+  Future<void> _uploadUserDoc() async {
+    if (_activeCaseId == null) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'docx', 'txt'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    if (file.bytes == null) return;
+    setState(() => _isUploadingDoc = true);
+    try {
+      await _userDocService.uploadDocument(
+        userId: _uid,
+        caseId: _activeCaseId!,
+        fileName: file.name,
+        fileBytes: file.bytes!,
+      );
+      await _loadUserDocs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('"${file.name}" subido al caso.'),
+          backgroundColor: AppTheme.primaryRed,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: ${e.toString().replaceFirst('Exception: ', '')}'),
+          backgroundColor: Colors.grey.shade800,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingDoc = false);
+    }
+  }
+
+  Future<void> _deleteUserDoc(String sourceName) async {
+    try {
+      await _userDocService.deleteDocument(_uid, sourceName);
+      await _loadUserDocs();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error al eliminar: ${e.toString().replaceFirst('Exception: ', '')}'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+  }
+
+  void _showUserDocsSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            left: 20, right: 20, top: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.lightBlue,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.folder_open, color: AppTheme.primaryRed, size: 18),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('Documentos del caso',
+                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                    Text(_activeCaseName ?? '',
+                        style: const TextStyle(color: AppTheme.textGray, fontSize: 12),
+                        overflow: TextOverflow.ellipsis),
+                  ]),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  icon: const Icon(Icons.close, size: 20, color: AppTheme.textGray),
+                ),
+              ]),
+              const SizedBox(height: 4),
+              const Divider(),
+              const SizedBox(height: 8),
+              if (_userDocs.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Text(
+                      'Sin documentos. Sube un PDF, DOCX o TXT\npara que la IA lo use en este caso.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppTheme.textGray, fontSize: 13, height: 1.5),
+                    ),
+                  ),
+                )
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 240),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _userDocs.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final doc = _userDocs[i];
+                      final ext = doc.source.split('.').last.toUpperCase();
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        leading: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppTheme.lightBlue,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(ext,
+                              style: const TextStyle(
+                                  color: AppTheme.primaryRed,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold)),
+                        ),
+                        title: Text(
+                          doc.source.replaceAll(RegExp(r'\.\w+$'), ''),
+                          style: const TextStyle(fontSize: 13),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text('${doc.chunks} fragmentos',
+                            style: const TextStyle(fontSize: 11, color: AppTheme.textGray)),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                          onPressed: () async {
+                            Navigator.pop(ctx);
+                            await _deleteUserDoc(doc.source);
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isUploadingDoc
+                      ? null
+                      : () async {
+                          Navigator.pop(ctx);
+                          await _uploadUserDoc();
+                        },
+                  icon: _isUploadingDoc
+                      ? const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Icon(Icons.upload_file, size: 18),
+                  label: Text(_isUploadingDoc ? 'Subiendo...' : 'Subir documento'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryRed,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Center(
+                child: Text('PDF, DOCX o TXT — máx. recomendado 10 MB',
+                    style: TextStyle(fontSize: 11, color: AppTheme.textGray)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -127,12 +326,12 @@ class _ChatScreenState extends State<ChatScreen> {
   void _selectCase(CaseModel c) async {
     if (_activeCaseId == c.id) return;
     setState(() { _activeCaseId = c.id; _activeCaseName = c.name; });
-    await _loadHistory(caseId: c.id);
+    await Future.wait([_loadHistory(caseId: c.id), _loadUserDocs()]);
   }
 
   void _selectGeneral() async {
     if (_activeCaseId == null) return;
-    setState(() { _activeCaseId = null; _activeCaseName = null; });
+    setState(() { _activeCaseId = null; _activeCaseName = null; _userDocs = []; });
     await _loadHistory();
   }
 
@@ -456,7 +655,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (isMobile) {
       return Scaffold(
         key: _scaffoldKey,
-        backgroundColor: const Color(0xFFF0F4F9),
+        backgroundColor: AppTheme.background,
         drawer: _buildCasesDrawer(),
         body: SafeArea(
           child: Column(
@@ -472,7 +671,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF0F4F9),
+      backgroundColor: AppTheme.background,
       body: SafeArea(
         child: Column(
           children: [
@@ -501,20 +700,20 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: const BoxDecoration(
         color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFE9ECF0))),
+        border: Border(bottom: BorderSide(color: AppTheme.lightSilver)),
       ),
       child: Row(
         children: [
           if (isMobile)
             IconButton(
-              icon: const Icon(Icons.menu, color: AppTheme.primaryBlue, size: 22),
+              icon: const Icon(Icons.menu, color: AppTheme.primaryRed, size: 22),
               onPressed: () => _scaffoldKey.currentState?.openDrawer(),
               tooltip: 'Mis casos',
             ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: AppTheme.primaryBlue,
+              color: AppTheme.primaryRed,
               borderRadius: BorderRadius.circular(8),
             ),
             child: const Text('OECE-IA',
@@ -528,7 +727,7 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: _activeCaseName != null
                 ? Row(children: [
-                    const Icon(Icons.folder_open, color: AppTheme.primaryBlue, size: 15),
+                    const Icon(Icons.folder_open, color: AppTheme.primaryRed, size: 15),
                     const SizedBox(width: 5),
                     Expanded(
                       child: Text(_activeCaseName!,
@@ -548,7 +747,7 @@ class _ChatScreenState extends State<ChatScreen> {
               icon: Badge(
                 label: Text('${_sources.length}'),
                 child: const Icon(Icons.folder_open_outlined,
-                    color: AppTheme.primaryBlue, size: 22),
+                    color: AppTheme.primaryRed, size: 22),
               ),
               onPressed: _showSourcesModal,
               tooltip: 'Ver fuentes',
@@ -561,7 +760,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           if (_isAdmin)
             IconButton(
-              icon: const Icon(Icons.tune, color: AppTheme.primaryBlue, size: 22),
+              icon: const Icon(Icons.tune, color: AppTheme.primaryRed, size: 22),
               tooltip: 'Panel admin',
               onPressed: () async {
                 await Navigator.push(context,
@@ -593,7 +792,7 @@ class _ChatScreenState extends State<ChatScreen> {
         padding: const EdgeInsets.only(left: 8),
         child: CircleAvatar(
           radius: 17,
-          backgroundColor: AppTheme.primaryBlue,
+          backgroundColor: AppTheme.primaryRed,
           backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
           child: photoUrl == null
               ? Text(initial,
@@ -617,12 +816,12 @@ class _ChatScreenState extends State<ChatScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: AppTheme.accentGold.withOpacity(0.15),
+                  color: AppTheme.silver.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: const Text('Administrador',
                     style: TextStyle(
-                        color: AppTheme.accentGold,
+                        color: AppTheme.silver,
                         fontSize: 10,
                         fontWeight: FontWeight.bold)),
               ),
@@ -634,7 +833,7 @@ class _ChatScreenState extends State<ChatScreen> {
           const PopupMenuItem(
               value: 'admin',
               child: Row(children: [
-                Icon(Icons.tune, size: 16, color: AppTheme.accentGold),
+                Icon(Icons.tune, size: 16, color: AppTheme.silver),
                 SizedBox(width: 10),
                 Text('Panel admin'),
               ])),
@@ -699,8 +898,8 @@ class _ChatScreenState extends State<ChatScreen> {
     return Container(
       width: wide ? 240 : 200,
       decoration: const BoxDecoration(
-        color: Color(0xFF1E293B),
-        border: Border(right: BorderSide(color: Color(0xFF334155))),
+        color: AppTheme.black,
+        border: Border(right: BorderSide(color: Color(0xFF2A2A2A))),
       ),
       child: Column(
         children: [
@@ -721,7 +920,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(5),
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryBlue.withOpacity(0.8),
+                    color: AppTheme.primaryRed.withOpacity(0.8),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: const Icon(Icons.add, color: Colors.white, size: 14),
@@ -729,9 +928,9 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ]),
           ),
-          const Divider(height: 1, color: Color(0xFF334155)),
+          const Divider(height: 1, color: Color(0xFF2A2A2A)),
           Expanded(child: _buildCasesList(onTap: _selectCase)),
-          const Divider(height: 1, color: Color(0xFF334155)),
+          const Divider(height: 1, color: Color(0xFF2A2A2A)),
           InkWell(
             onTap: _createCase,
             child: Padding(
@@ -811,7 +1010,7 @@ class _ChatScreenState extends State<ChatScreen> {
       margin: const EdgeInsets.only(bottom: 2),
       decoration: BoxDecoration(
         color: isSelected
-            ? AppTheme.primaryBlue.withOpacity(0.35)
+            ? AppTheme.primaryRed.withOpacity(0.35)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(7),
       ),
@@ -871,7 +1070,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildCasesDrawer() {
     return Drawer(
-      backgroundColor: const Color(0xFF1E293B),
+      backgroundColor: const AppTheme.black,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -883,7 +1082,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryBlue,
+                    color: AppTheme.primaryRed,
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: const Text('OECE-IA',
@@ -909,7 +1108,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Nuevo caso'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primaryBlue,
+                  backgroundColor: AppTheme.primaryRed,
                   foregroundColor: Colors.white,
                   minimumSize: const Size(double.infinity, 40),
                   shape: RoundedRectangleBorder(
@@ -917,7 +1116,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
             ),
-            const Divider(height: 1, color: Color(0xFF334155)),
+            const Divider(height: 1, color: Color(0xFF2A2A2A)),
             Expanded(
               child: _buildCasesList(
                 onAfterTap: () => Navigator.pop(context),
@@ -937,7 +1136,7 @@ class _ChatScreenState extends State<ChatScreen> {
       width: 220,
       decoration: const BoxDecoration(
         color: Colors.white,
-        border: Border(left: BorderSide(color: Color(0xFFE9ECF0))),
+        border: Border(left: BorderSide(color: AppTheme.lightSilver)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -946,7 +1145,7 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
             child: Row(children: [
               const Icon(Icons.folder_open_outlined,
-                  color: AppTheme.primaryBlue, size: 15),
+                  color: AppTheme.primaryRed, size: 15),
               const SizedBox(width: 6),
               const Expanded(
                 child: Text('Fuentes',
@@ -965,7 +1164,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Text('${_sources.length}',
                     style: const TextStyle(
                         fontSize: 10,
-                        color: AppTheme.primaryBlue,
+                        color: AppTheme.primaryRed,
                         fontWeight: FontWeight.w600)),
               ),
             ]),
@@ -999,9 +1198,9 @@ class _ChatScreenState extends State<ChatScreen> {
       margin: const EdgeInsets.symmetric(vertical: 2),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: const AppTheme.background,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFE9ECF0)),
+        border: Border.all(color: const AppTheme.lightSilver),
       ),
       child: Row(children: [
         Container(
@@ -1038,11 +1237,11 @@ class _ChatScreenState extends State<ChatScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(children: const [
           Icon(Icons.add_circle_outline,
-              color: AppTheme.primaryBlue, size: 14),
+              color: AppTheme.primaryRed, size: 14),
           SizedBox(width: 6),
           Text('Agregar fuente',
               style: TextStyle(
-                  color: AppTheme.primaryBlue,
+                  color: AppTheme.primaryRed,
                   fontSize: 11,
                   fontWeight: FontWeight.w600)),
         ]),
@@ -1059,7 +1258,7 @@ class _ChatScreenState extends State<ChatScreen> {
           child: !_historyLoaded
               ? const Center(
                   child: CircularProgressIndicator(
-                      color: AppTheme.primaryBlue, strokeWidth: 2))
+                      color: AppTheme.primaryRed, strokeWidth: 2))
               : ListView.builder(
                   controller: _scrollController,
                   padding: const EdgeInsets.symmetric(
@@ -1107,7 +1306,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
-                              color: const Color(0xFFD1D5DB)),
+                              color: AppTheme.lightSilver),
                           boxShadow: [
                             BoxShadow(
                                 color: Colors.black.withOpacity(0.04),
@@ -1117,7 +1316,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         child: Text(q,
                             style: const TextStyle(
                                 fontSize: 12.5,
-                                color: AppTheme.primaryBlue)),
+                                color: AppTheme.primaryRed)),
                       ),
                     ))
                 .toList(),
@@ -1137,7 +1336,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       decoration: const BoxDecoration(
         color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFE9ECF0))),
+        border: Border(top: BorderSide(color: AppTheme.lightSilver)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -1145,9 +1344,9 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: Container(
               decoration: BoxDecoration(
-                color: const Color(0xFFF0F4F9),
+                color: AppTheme.background,
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: const Color(0xFFE0E4EA)),
+                border: Border.all(color: AppTheme.lightSilver),
               ),
               child: TextField(
                 controller: _inputController,
@@ -1170,7 +1369,58 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
+          if (_activeCaseId != null)
+            GestureDetector(
+              onTap: _isUploadingDoc ? null : _showUserDocsSheet,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: AppTheme.black,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                        color: Colors.black.withOpacity(0.18),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2))
+                  ],
+                ),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const Center(
+                      child: Icon(Icons.attach_file_rounded,
+                          color: Colors.white, size: 20),
+                    ),
+                    if (_userDocs.isNotEmpty)
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: Container(
+                          width: 14,
+                          height: 14,
+                          decoration: const BoxDecoration(
+                            color: AppTheme.primaryRed,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text(
+                              '${_userDocs.length}',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          const SizedBox(width: 8),
           GestureDetector(
             onTap: _isLoading ? null : _send,
             child: AnimatedContainer(
@@ -1179,15 +1429,15 @@ class _ChatScreenState extends State<ChatScreen> {
               height: 46,
               decoration: BoxDecoration(
                 color: _isLoading
-                    ? const Color(0xFFCBD5E1)
-                    : AppTheme.primaryBlue,
+                    ? AppTheme.lightSilver
+                    : AppTheme.primaryRed,
                 shape: BoxShape.circle,
                 boxShadow: _isLoading
                     ? []
                     : [
                         BoxShadow(
                             color:
-                                AppTheme.primaryBlue.withOpacity(0.35),
+                                AppTheme.primaryRed.withOpacity(0.35),
                             blurRadius: 10,
                             offset: const Offset(0, 3))
                       ],
@@ -1224,7 +1474,7 @@ class _SourcesSheet extends StatelessWidget {
         children: [
           Row(children: [
             const Icon(Icons.folder_open_outlined,
-                color: AppTheme.primaryBlue, size: 20),
+                color: AppTheme.primaryRed, size: 20),
             const SizedBox(width: 8),
             const Text('Fuentes OECE',
                 style:

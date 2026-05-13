@@ -175,8 +175,8 @@ class _AdminScreenState extends State<AdminScreen>
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: newRole == 'admin'
-                  ? AppTheme.accentGold
-                  : AppTheme.primaryBlue,
+                  ? AppTheme.silver
+                  : AppTheme.primaryRed,
             ),
             child: Text('Hacer $newRole'),
           ),
@@ -208,10 +208,10 @@ class _AdminScreenState extends State<AdminScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: AppTheme.primaryBlue,
+        backgroundColor: AppTheme.primaryRed,
         title: const Row(
           children: [
-            Icon(Icons.admin_panel_settings, color: AppTheme.accentGold),
+            Icon(Icons.admin_panel_settings, color: AppTheme.silver),
             SizedBox(width: 8),
             Text('Panel de Administración',
                 style: TextStyle(color: Colors.white)),
@@ -219,7 +219,7 @@ class _AdminScreenState extends State<AdminScreen>
         ),
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: AppTheme.accentGold,
+          indicatorColor: AppTheme.silver,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white54,
           tabs: const [
@@ -248,7 +248,7 @@ class _AdminScreenState extends State<AdminScreen>
         Expanded(
           child: _loadingDocs
               ? const Center(
-                  child: CircularProgressIndicator(color: AppTheme.primaryBlue))
+                  child: CircularProgressIndicator(color: AppTheme.primaryRed))
               : _documents.isEmpty
                   ? _buildEmptyDocs()
                   : RefreshIndicator(
@@ -276,12 +276,12 @@ class _AdminScreenState extends State<AdminScreen>
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       child: Row(
         children: [
-          const Icon(Icons.storage, color: AppTheme.primaryBlue, size: 18),
+          const Icon(Icons.storage, color: AppTheme.primaryRed, size: 18),
           const SizedBox(width: 8),
           Text(
             'Total en base: $total chunks  ·  ${_documents.length} documento(s)',
             style: const TextStyle(
-              color: AppTheme.primaryBlue,
+              color: AppTheme.primaryRed,
               fontWeight: FontWeight.w600,
               fontSize: 13,
             ),
@@ -292,7 +292,7 @@ class _AdminScreenState extends State<AdminScreen>
               _loadDocuments();
               _loadStats();
             },
-            icon: const Icon(Icons.refresh, size: 18, color: AppTheme.primaryBlue),
+            icon: const Icon(Icons.refresh, size: 18, color: AppTheme.primaryRed),
             tooltip: 'Actualizar',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
@@ -418,7 +418,7 @@ class _AdminScreenState extends State<AdminScreen>
           icon: const Icon(Icons.upload_file),
           label: const Text('Subir documentos (PDF / DOCX / TXT)'),
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.primaryBlue,
+            backgroundColor: AppTheme.primaryRed,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 14),
             shape:
@@ -434,7 +434,7 @@ class _AdminScreenState extends State<AdminScreen>
   Widget _buildUsersTab() {
     return _loadingUsers
         ? const Center(
-            child: CircularProgressIndicator(color: AppTheme.primaryBlue))
+            child: CircularProgressIndicator(color: AppTheme.primaryRed))
         : _users.isEmpty
             ? const Center(
                 child: Text('No hay usuarios registrados',
@@ -464,7 +464,7 @@ class _AdminScreenState extends State<AdminScreen>
             const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: CircleAvatar(
           backgroundColor:
-              isAdmin ? AppTheme.accentGold : AppTheme.primaryBlue,
+              isAdmin ? AppTheme.silver : AppTheme.primaryRed,
           child: Text(
             name.isNotEmpty ? name[0].toUpperCase() : 'U',
             style: const TextStyle(
@@ -486,19 +486,19 @@ class _AdminScreenState extends State<AdminScreen>
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
             decoration: BoxDecoration(
               color: isAdmin
-                  ? AppTheme.accentGold.withOpacity(0.15)
+                  ? AppTheme.silver.withOpacity(0.15)
                   : AppTheme.lightBlue,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: isAdmin
-                    ? AppTheme.accentGold
-                    : AppTheme.primaryBlue.withOpacity(0.4),
+                    ? AppTheme.silver
+                    : AppTheme.primaryRed.withOpacity(0.4),
               ),
             ),
             child: Text(
               isAdmin ? 'Admin' : 'Usuario',
               style: TextStyle(
-                color: isAdmin ? AppTheme.accentGold : AppTheme.primaryBlue,
+                color: isAdmin ? AppTheme.silver : AppTheme.primaryRed,
                 fontWeight: FontWeight.bold,
                 fontSize: 12,
               ),

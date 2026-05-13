@@ -26,7 +26,7 @@ class ChatBubble extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 520),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
-              color: AppTheme.primaryBlue,
+              color: AppTheme.primaryRed,
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(18),
                 topRight: Radius.circular(18),
@@ -55,9 +55,9 @@ class ChatBubble extends StatelessWidget {
           height: 32,
           margin: const EdgeInsets.only(right: 10, top: 2),
           decoration: BoxDecoration(
-            color: AppTheme.primaryBlue,
+            color: AppTheme.black,
             shape: BoxShape.circle,
-            border: Border.all(color: AppTheme.accentGold, width: 1.5),
+            border: Border.all(color: AppTheme.silver, width: 1.5),
           ),
           child: const Center(
             child: Text('IA',
@@ -80,7 +80,7 @@ class ChatBubble extends StatelessWidget {
                     bottomLeft: Radius.circular(18),
                     bottomRight: Radius.circular(18),
                   ),
-                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  border: Border.all(color: AppTheme.lightSilver),
                   boxShadow: [
                     BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2)),
                   ],
@@ -91,22 +91,22 @@ class ChatBubble extends StatelessWidget {
                         data: message.content,
                         styleSheet: MarkdownStyleSheet(
                           p: const TextStyle(color: AppTheme.textDark, fontSize: 14.5, height: 1.6),
-                          strong: const TextStyle(color: AppTheme.primaryBlue, fontWeight: FontWeight.bold),
+                          strong: const TextStyle(color: AppTheme.primaryRed, fontWeight: FontWeight.bold),
                           code: const TextStyle(
-                            backgroundColor: Color(0xFFF0F4F9),
+                            backgroundColor: Color(0xFFF3F4F6),
                             fontFamily: 'monospace',
                             fontSize: 13,
                           ),
                           codeblockDecoration: BoxDecoration(
-                            color: const Color(0xFFF0F4F9),
+                            color: const Color(0xFFF3F4F6),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           blockquoteDecoration: BoxDecoration(
                             color: AppTheme.lightBlue,
                             borderRadius: BorderRadius.circular(4),
-                            border: const Border(left: BorderSide(color: AppTheme.primaryBlue, width: 3)),
+                            border: const Border(left: BorderSide(color: AppTheme.primaryRed, width: 3)),
                           ),
-                          listBullet: const TextStyle(color: AppTheme.primaryBlue),
+                          listBullet: const TextStyle(color: AppTheme.primaryRed),
                           h2: const TextStyle(
                               color: AppTheme.textDark, fontWeight: FontWeight.w700, fontSize: 16),
                           h3: const TextStyle(
@@ -146,10 +146,10 @@ class ChatBubble extends StatelessWidget {
           decoration: BoxDecoration(
             color: AppTheme.lightBlue,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppTheme.primaryBlue.withOpacity(0.25)),
+            border: Border.all(color: AppTheme.primaryRed.withOpacity(0.25)),
           ),
           child: Text(s,
-              style: const TextStyle(fontSize: 11, color: AppTheme.primaryBlue),
+              style: const TextStyle(fontSize: 11, color: AppTheme.primaryRed),
               maxLines: 1,
               overflow: TextOverflow.ellipsis),
         )),
@@ -202,7 +202,7 @@ class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
         width: 7, height: 7,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: AppTheme.primaryBlue.withOpacity(0.3 + 0.7 * _anim.value),
+          color: AppTheme.primaryRed.withOpacity(0.3 + 0.7 * _anim.value),
         ),
       ),
     );

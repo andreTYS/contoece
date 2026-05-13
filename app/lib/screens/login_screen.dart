@@ -78,7 +78,7 @@ class _LoginScreenState extends State<LoginScreen>
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [AppTheme.primaryBlue, Color(0xFF001F5E)],
+                colors: [AppTheme.black, Color(0xFF3A0008)],
               ),
             ),
             child: SafeArea(
@@ -145,7 +145,7 @@ class _LoginScreenState extends State<LoginScreen>
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [AppTheme.primaryBlue, Color(0xFF001B54)],
+          colors: [AppTheme.black, Color(0xFF3A0008)],
         ),
       ),
       child: SafeArea(
@@ -199,18 +199,18 @@ class _LoginScreenState extends State<LoginScreen>
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppTheme.primaryRed,
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
+                  color: AppTheme.primaryRed.withOpacity(0.4),
                   blurRadius: 12,
                   offset: const Offset(0, 4))
             ],
           ),
           child: const Center(
             child: Icon(Icons.account_balance,
-                color: AppTheme.primaryBlue, size: 24),
+                color: Colors.white, size: 24),
           ),
         ),
         const SizedBox(width: 12),
@@ -226,14 +226,14 @@ class _LoginScreenState extends State<LoginScreen>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: AppTheme.accentGold.withOpacity(0.2),
+                color: AppTheme.silver.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(4),
                 border: Border.all(
-                    color: AppTheme.accentGold.withOpacity(0.5), width: 1),
+                    color: AppTheme.silver.withOpacity(0.5), width: 1),
               ),
               child: const Text('Contrataciones Públicas',
                   style: TextStyle(
-                      color: AppTheme.accentGold,
+                      color: AppTheme.silver,
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
                       letterSpacing: 0.5)),
@@ -263,7 +263,7 @@ class _LoginScreenState extends State<LoginScreen>
                       color: Colors.white.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Icon(f.$1, color: AppTheme.accentGold, size: 16),
+                    child: Icon(f.$1, color: AppTheme.silver, size: 16),
                   ),
                   const SizedBox(width: 12),
                   Text(f.$2,
@@ -323,7 +323,7 @@ class _LoginScreenState extends State<LoginScreen>
             child: _isLoading
                 ? Center(
                     child: CircularProgressIndicator(
-                        color: dark ? Colors.white : AppTheme.primaryBlue,
+                        color: dark ? Colors.white : AppTheme.primaryRed,
                         strokeWidth: 2.5))
                 : _GoogleSignInButton(onTap: _signIn, dark: dark),
           ),
