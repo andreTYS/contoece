@@ -1,0 +1,57 @@
+services:
+  oece-server:
+    build: ./server
+    container_name: oece-ia-server
+    restart: unless-stopped
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - GEMINI_EMBEDDING_MODEL=${GEMINI_EMBEDDING_MODEL:-models/text-embedding-004}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+    volumes:
+      - oece_chroma:/app/chroma_db
+      - oece_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=false"
+    networks:
+      - internal
+
+  oece-web:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.web
+    container_name: oece-ia-web
+    restart: unless-stopped
+    depends_on:
+      - oece-server
+    volumes:
+      - /var/www/certbot:/var/www/certbot:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.oece-web.rule=Host(`oece.masredespro.com`)"
+      - "traefik.http.routers.oece-web.entrypoints=websecure"
+      - "traefik.http.routers.oece-web.tls=true"
+      - "traefik.http.services.oece-web.loadbalancer.server.port=80"
+      - "traefik.http.routers.oece-acme.rule=Host(`oece.masredespro.com`) && PathPrefix(`/.well-known/acme-challenge/`)"
+      - "traefik.http.routers.oece-acme.entrypoints=web"
+      - "traefik.http.routers.oece-acme.service=oece-web"
+      - "traefik.http.routers.oece-acme.priority=1000"
+      - "traefik.docker.network=n8n_default"
+    networks:
+      - n8n_default
+      - internal
+
+networks:
+  n8n_default:
+    external: true
+  internal:
+    driver: bridge
+
+volumes:
+  oece_chroma:
+  oece_data:
