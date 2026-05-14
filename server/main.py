@@ -429,26 +429,34 @@ def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str],
     user_col = _get_user_collection(request.user_id)
     if user_col and user_col.count() > 0:
         try:
-            q_kwargs: dict = {
-                "query_texts": [request.message],
-                "n_results": min(3, user_col.count()),
-                "include": ["documents", "metadatas", "distances"],
-            }
+            # Count only docs matching the case filter to avoid n_results > matches error
             if request.case_id:
-                q_kwargs["where"] = {"case_id": request.case_id}
-            u_results = user_col.query(**q_kwargs)
-            u_docs = u_results.get("documents", [[]])[0]
-            u_metas = u_results.get("metadatas", [[]])[0]
-            u_distances = u_results.get("distances", [[]])[0]
-            u_relevant = [(d, m) for d, m, dist in zip(u_docs, u_metas, u_distances) if dist < 0.65]
-            if u_relevant:
-                documents_found += len(u_relevant)
-                context_text += "\n\n---\n**DOCUMENTOS PROPIOS DEL USUARIO:**\n"
-                for doc, meta in u_relevant:
-                    source = meta.get("source", "Archivo personal")
-                    context_text += f"\n*Archivo: {source}*\n{doc}\n"
-                    if source not in user_sources:
-                        user_sources.append(source)
+                matching = user_col.get(where={"case_id": request.case_id})
+                count_for_query = len(matching.get("ids", []))
+            else:
+                count_for_query = user_col.count()
+
+            if count_for_query > 0:
+                q_kwargs: dict = {
+                    "query_texts": [request.message],
+                    "n_results": min(3, count_for_query),
+                    "include": ["documents", "metadatas", "distances"],
+                }
+                if request.case_id:
+                    q_kwargs["where"] = {"case_id": request.case_id}
+                u_results = user_col.query(**q_kwargs)
+                u_docs = u_results.get("documents", [[]])[0]
+                u_metas = u_results.get("metadatas", [[]])[0]
+                u_distances = u_results.get("distances", [[]])[0]
+                u_relevant = [(d, m) for d, m, dist in zip(u_docs, u_metas, u_distances) if dist < 0.65]
+                if u_relevant:
+                    documents_found += len(u_relevant)
+                    context_text += "\n\n---\n**DOCUMENTOS PROPIOS DEL USUARIO:**\n"
+                    for doc, meta in u_relevant:
+                        source = meta.get("source", "Archivo personal")
+                        context_text += f"\n*Archivo: {source}*\n{doc}\n"
+                        if source not in user_sources:
+                            user_sources.append(source)
         except Exception as e:
             logger.warning(f"Error RAG usuario: {e}")
 
