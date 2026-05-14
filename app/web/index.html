@@ -17,7 +17,7 @@
   <style>
     body {
       margin: 0;
-      background-color: #003087;
+      background-color: #111111;
       font-family: 'Segoe UI', Arial, sans-serif;
     }
     #loading-screen {
@@ -27,7 +27,7 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      background: linear-gradient(160deg, #003087 0%, #0055A5 60%, #001F5E 100%);
+      background: linear-gradient(160deg, #111111 0%, #C0152A 60%, #8B0010 100%);
       z-index: 9999;
     }
     .loader-logo {
@@ -44,7 +44,7 @@
     .loader-logo svg {
       width: 48px;
       height: 48px;
-      fill: #003087;
+      fill: #C0152A;
     }
     .loader-title {
       color: white;
@@ -54,7 +54,7 @@
       margin-bottom: 6px;
     }
     .loader-subtitle {
-      color: #D4A017;
+      color: #9DA5AE;
       font-size: 13px;
       letter-spacing: 1px;
       margin-bottom: 32px;
@@ -79,7 +79,6 @@
   <!-- Pantalla de carga -->
   <div id="loading-screen">
     <div class="loader-logo">
-      <!-- Ícono de banco/institución -->
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
         <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
       </svg>
@@ -90,13 +89,33 @@
   </div>
 
   <script>
+    // Forzar activación inmediata del nuevo service worker en móviles
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('controllerchange', function() {
+        window.location.reload();
+      });
+      navigator.serviceWorker.ready.then(function(reg) {
+        if (reg.waiting) {
+          reg.waiting.postMessage('skip-waiting');
+        }
+        reg.addEventListener('updatefound', function() {
+          var sw = reg.installing;
+          sw.addEventListener('statechange', function() {
+            if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+              sw.postMessage('skip-waiting');
+            }
+          });
+        });
+      });
+    }
+
     // Oculta la pantalla de carga cuando Flutter está listo
     window.addEventListener('flutter-first-frame', function() {
-      const screen = document.getElementById('loading-screen');
+      var screen = document.getElementById('loading-screen');
       if (screen) {
         screen.style.transition = 'opacity 0.5s ease';
         screen.style.opacity = '0';
-        setTimeout(() => screen.remove(), 500);
+        setTimeout(function() { screen.remove(); }, 500);
       }
     });
   </script>
