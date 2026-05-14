@@ -48,6 +48,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _serverConnected = false;
   bool _historyLoaded = false;
   bool _casesLoaded = false;
+  bool _showDocsSidebar = false;
   String? _activeCaseId;
   String? _activeCaseName;
   String? _pendingRetryText;
@@ -682,7 +683,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   _buildCasesSidebar(wide: isDesktop),
                   Expanded(child: _buildChat()),
-                  if (isDesktop && _sources.isNotEmpty) _buildSourcesPanel(),
+                  if (_activeCaseId != null)
+                    _buildCaseDocsPanel()
+                  else if (isDesktop && _sources.isNotEmpty)
+                    _buildSourcesPanel(),
                 ],
               ),
             ),
@@ -742,7 +746,31 @@ class _ChatScreenState extends State<ChatScreen> {
                     style: TextStyle(color: AppTheme.textGray, fontSize: 13),
                     overflow: TextOverflow.ellipsis),
           ),
-          if (isMobile && _sources.isNotEmpty)
+          if (isMobile && _activeCaseId != null)
+            IconButton(
+              icon: Stack(clipBehavior: Clip.none, children: [
+                const Icon(Icons.description_outlined,
+                    color: AppTheme.primaryRed, size: 22),
+                if (_userDocs.isNotEmpty)
+                  Positioned(
+                    top: -4, right: -4,
+                    child: Container(
+                      width: 14, height: 14,
+                      decoration: const BoxDecoration(
+                          color: AppTheme.primaryRed, shape: BoxShape.circle),
+                      child: Center(
+                        child: Text('${_userDocs.length}',
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 8,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+              ]),
+              onPressed: _showUserDocsSheet,
+              tooltip: 'Documentos del caso',
+            ),
+          if (isMobile && _activeCaseId == null && _sources.isNotEmpty)
             IconButton(
               icon: Badge(
                 label: Text('${_sources.length}'),
@@ -1129,6 +1157,196 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // ─── Case docs panel (right, desktop — NotebookLM style) ─────────────────
+
+  Widget _buildCaseDocsPanel() {
+    return Container(
+      width: 250,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(left: BorderSide(color: AppTheme.lightSilver)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 14, 8, 12),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: AppTheme.lightSilver)),
+            ),
+            child: Row(children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: AppTheme.lightBlue,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.folder_open,
+                    color: AppTheme.primaryRed, size: 16),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Documentos',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                              color: AppTheme.textDark)),
+                      Text(_activeCaseName ?? '',
+                          style: const TextStyle(
+                              color: AppTheme.textGray, fontSize: 11),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                    ]),
+              ),
+            ]),
+          ),
+          // Upload button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isUploadingDoc ? null : _uploadUserDoc,
+                icon: _isUploadingDoc
+                    ? const SizedBox(
+                        width: 14, height: 14,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : const Icon(Icons.upload_file_outlined, size: 16),
+                label: Text(_isUploadingDoc ? 'Subiendo...' : 'Subir documento',
+                    style: const TextStyle(fontSize: 12)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryRed,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                  elevation: 0,
+                ),
+              ),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 10),
+            child: Text('PDF, DOCX o TXT',
+                style: TextStyle(color: AppTheme.textGray, fontSize: 10)),
+          ),
+          const SizedBox(height: 8),
+          const Divider(height: 1),
+          // Doc list
+          Expanded(
+            child: _userDocs.isEmpty
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text(
+                        'Sin documentos.\nSube archivos para que la IA los use en este caso.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: AppTheme.textGray,
+                            fontSize: 12,
+                            height: 1.5),
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 6, horizontal: 8),
+                    itemCount: _userDocs.length,
+                    separatorBuilder: (_, __) =>
+                        const SizedBox(height: 2),
+                    itemBuilder: (_, i) {
+                      final doc = _userDocs[i];
+                      final ext =
+                          doc.source.split('.').last.toUpperCase();
+                      final extColor = ext == 'PDF'
+                          ? Colors.red.shade600
+                          : ext == 'DOCX'
+                              ? Colors.blue.shade600
+                              : Colors.green.shade600;
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: AppTheme.background,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: AppTheme.lightSilver),
+                        ),
+                        child: Row(children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: extColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(ext,
+                                style: TextStyle(
+                                    color: extColor,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    doc.source
+                                        .replaceAll(RegExp(r'\.\w+$'), ''),
+                                    style: const TextStyle(
+                                        fontSize: 11,
+                                        color: AppTheme.textDark,
+                                        fontWeight: FontWeight.w500),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text('${doc.chunks} fragmentos',
+                                      style: const TextStyle(
+                                          fontSize: 10,
+                                          color: AppTheme.textGray)),
+                                ]),
+                          ),
+                          GestureDetector(
+                            onTap: () => _deleteUserDoc(doc.source),
+                            child: const Padding(
+                              padding: EdgeInsets.only(left: 4),
+                              child: Icon(Icons.delete_outline,
+                                  size: 16, color: Colors.red),
+                            ),
+                          ),
+                        ]),
+                      );
+                    },
+                  ),
+          ),
+          // Base de conocimiento info
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Row(children: [
+              const Icon(Icons.library_books_outlined,
+                  size: 14, color: AppTheme.textGray),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Base OECE: ${_sources.length} doc${_sources.length == 1 ? '' : 's'}',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppTheme.textGray),
+                ),
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ─── Sources panel (right, desktop) ──────────────────────────────────────
 
   Widget _buildSourcesPanel() {
@@ -1370,7 +1588,9 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          if (_activeCaseId != null)
+          // En móvil: botón clip para subir doc (el panel no está visible)
+          if (_activeCaseId != null &&
+              MediaQuery.of(context).size.width < 720)
             GestureDetector(
               onTap: _isUploadingDoc ? null : _showUserDocsSheet,
               child: AnimatedContainer(
