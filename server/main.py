@@ -32,7 +32,7 @@ logger = logging.getLogger("oece-ia")
 
 GEMINI_API_KEY        = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL          = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
 CHROMA_DB_PATH        = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 ALLOWED_ORIGINS       = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 CHUNK_SIZE   = 800
