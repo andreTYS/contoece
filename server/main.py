@@ -137,7 +137,7 @@ async def lifespan(app: FastAPI):
     if not GEMINI_API_KEY:
         logger.error("GEMINI_API_KEY no configurada.")
     else:
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1"})
         logger.info(f"Gemini configurado. Modelo: {GEMINI_MODEL} | Embedding: {GEMINI_EMBEDDING_MODEL}")
 
     try:
