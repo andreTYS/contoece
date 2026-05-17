@@ -16,6 +16,7 @@ from typing import Optional
 
 import chromadb
 import json
+import requests as http_requests
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -85,22 +86,34 @@ gemini_client: Optional[genai.Client] = None
 # ─── Embedding con Gemini ─────────────────────────────────────────────────────
 
 class GeminiEmbeddingFunction(EmbeddingFunction):
-    """Embedding sincrónico usando Gemini text-embedding-004 (requerido por ChromaDB)."""
+    """Embedding sincrónico usando Gemini REST API directa (evita problemas de versión SDK)."""
 
-    _BATCH_SIZE = 100
+    _BATCH_SIZE = 20
 
     def __call__(self, input: Documents) -> Embeddings:
-        if not input or not gemini_client:
+        if not input or not GEMINI_API_KEY:
             return []
         all_embeddings: Embeddings = []
-        for i in range(0, len(input), self._BATCH_SIZE):
-            batch = list(input[i : i + self._BATCH_SIZE])
-            result = gemini_client.models.embed_content(
-                model=GEMINI_EMBEDDING_MODEL,
-                contents=batch,
-                config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
-            )
-            all_embeddings.extend([e.values for e in result.embeddings])
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{GEMINI_EMBEDDING_MODEL}:embedContent?key={GEMINI_API_KEY}"
+        )
+        for text in input:
+            try:
+                resp = http_requests.post(
+                    url,
+                    json={
+                        "model": f"models/{GEMINI_EMBEDDING_MODEL}",
+                        "content": {"parts": [{"text": str(text)}]},
+                        "taskType": "RETRIEVAL_DOCUMENT",
+                    },
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                all_embeddings.append(resp.json()["embedding"]["values"])
+            except Exception as e:
+                logger.error(f"Error embedding texto: {e}")
+                all_embeddings.append([0.0] * 768)
         return all_embeddings
 
 
@@ -137,7 +150,7 @@ async def lifespan(app: FastAPI):
     if not GEMINI_API_KEY:
         logger.error("GEMINI_API_KEY no configurada.")
     else:
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1"})
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
         logger.info(f"Gemini configurado. Modelo: {GEMINI_MODEL} | Embedding: {GEMINI_EMBEDDING_MODEL}")
 
     try:
