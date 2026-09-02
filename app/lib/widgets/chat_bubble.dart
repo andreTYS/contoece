@@ -243,71 +243,11 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
-  // ─── Sources ──────────────────────────────────────────────────────────────
+  // ─── Sources / Citations ──────────────────────────────────────────────────
 
   Widget _buildSources() {
     final uniqueSources = widget.message.sources.toSet().toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(children: [
-          const Icon(Icons.menu_book_rounded, size: 11, color: AppTheme.textGray),
-          const SizedBox(width: 4),
-          Text('${uniqueSources.length} fuente${uniqueSources.length == 1 ? '' : 's'}',
-              style: const TextStyle(
-                  fontSize: 10,
-                  color: AppTheme.textGray,
-                  fontWeight: FontWeight.w600)),
-        ]),
-        const SizedBox(height: 5),
-        Wrap(
-          spacing: 6,
-          runSpacing: 5,
-          children: uniqueSources.take(5).mapIndexed((i, s) => _buildSourceChip(i + 1, s)).toList(),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSourceChip(int index, String source) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF3EA),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppTheme.primaryRed.withOpacity(0.2)),
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 14,
-          height: 14,
-          decoration: BoxDecoration(
-            color: AppTheme.primaryRed,
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text('$index',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 8,
-                    fontWeight: FontWeight.bold)),
-          ),
-        ),
-        const SizedBox(width: 5),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 160),
-          child: Text(
-            source.replaceAll(RegExp(r'\.\w+$'), ''),
-            style: const TextStyle(
-                fontSize: 11,
-                color: AppTheme.primaryRed,
-                fontWeight: FontWeight.w500),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ]),
-    );
+    return _CitationPanel(sources: uniqueSources);
   }
 
   // ─── Typing indicator ─────────────────────────────────────────────────────
@@ -430,6 +370,161 @@ class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
           color:
               AppTheme.primaryRed.withOpacity(0.25 + 0.75 * _anim.value),
         ),
+      ),
+    );
+  }
+}
+
+// ─── Citation panel ────────────────────────────────────────────────────────────
+
+class _CitationPanel extends StatefulWidget {
+  final List<String> sources;
+  const _CitationPanel({required this.sources});
+
+  @override
+  State<_CitationPanel> createState() => _CitationPanelState();
+}
+
+class _CitationPanelState extends State<_CitationPanel> {
+  bool _expanded = false;
+
+  String _shortName(String source) =>
+      source.replaceAll(RegExp(r'\.\w+$'), '');
+
+  String _ext(String source) => source.split('.').last.toUpperCase();
+
+  Color _extColor(String ext) {
+    switch (ext) {
+      case 'PDF': return Colors.red.shade600;
+      case 'DOCX': return Colors.blue.shade600;
+      default: return Colors.green.shade600;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.sources.isEmpty) return const SizedBox.shrink();
+    final count = widget.sources.length;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8F3),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.primaryRed.withOpacity(0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header — always visible
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              child: Row(children: [
+                const Icon(Icons.menu_book_rounded,
+                    size: 13, color: AppTheme.primaryRed),
+                const SizedBox(width: 6),
+                Text(
+                  '$count referencia${count == 1 ? '' : 's'} consultada${count == 1 ? '' : 's'}',
+                  style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.primaryRed),
+                ),
+                const Spacer(),
+                // Inline numbered badges (collapsed)
+                if (!_expanded)
+                  Wrap(
+                    spacing: 4,
+                    children: widget.sources
+                        .take(4)
+                        .toList()
+                        .asMap()
+                        .entries
+                        .map((e) => _NumBadge(e.key + 1))
+                        .toList(),
+                  ),
+                const SizedBox(width: 6),
+                Icon(
+                  _expanded
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  size: 16,
+                  color: AppTheme.primaryRed,
+                ),
+              ]),
+            ),
+          ),
+          // Expanded details
+          if (_expanded) ...[
+            const Divider(height: 1, color: Color(0xFFFFDDC5)),
+            ...widget.sources.asMap().entries.map((e) {
+              final i = e.key + 1;
+              final src = e.value;
+              final ext = _ext(src);
+              final color = _extColor(ext);
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+                child: Row(children: [
+                  _NumBadge(i),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Text(ext,
+                        style: TextStyle(
+                            color: color,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      _shortName(src),
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.textDark,
+                          fontWeight: FontWeight.w500),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ]),
+              );
+            }),
+            const SizedBox(height: 2),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NumBadge extends StatelessWidget {
+  final int index;
+  const _NumBadge(this.index);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 16,
+      height: 16,
+      decoration: const BoxDecoration(
+        color: AppTheme.primaryRed,
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: Text('$index',
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 8,
+                fontWeight: FontWeight.bold)),
       ),
     );
   }

@@ -18,16 +18,31 @@ class FirestoreService {
     try {
       final ref = _db!.collection('users').doc(uid);
       final snap = await ref.get();
-      final isAdmin = AppConfig.adminEmails.contains(email.toLowerCase());
+      final isHardAdmin = AppConfig.adminEmails.contains(email.toLowerCase());
+
+      // Check pre-assigned role
+      String role = isHardAdmin ? 'admin' : 'user';
+      if (!isHardAdmin) {
+        final preassigned = await getPreassignedRole(email);
+        if (preassigned != null) role = preassigned;
+      }
+
       if (!snap.exists) {
         await ref.set({
           'email': email,
           'displayName': displayName,
-          'role': isAdmin ? 'admin' : 'user',
+          'role': role,
           'createdAt': FieldValue.serverTimestamp(),
+          'lastLoginAt': FieldValue.serverTimestamp(),
         });
-      } else if (isAdmin && snap.data()?['role'] != 'admin') {
-        await ref.update({'role': 'admin'});
+      } else {
+        final updates = <String, dynamic>{'lastLoginAt': FieldValue.serverTimestamp()};
+        if (isHardAdmin && snap.data()?['role'] != 'admin') {
+          updates['role'] = 'admin';
+        } else if (!isHardAdmin && snap.data()?['role'] == 'user' && role == 'admin') {
+          updates['role'] = 'admin';
+        }
+        await ref.update(updates);
       }
     } catch (_) {}
   }
@@ -54,6 +69,15 @@ class FirestoreService {
     await _db!.collection('users').doc(uid).update({'role': role});
   }
 
+  Future<void> updateLastLogin(String uid) async {
+    if (AppConfig.demoMode) return;
+    try {
+      await _db!.collection('users').doc(uid).update({
+        'lastLoginAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+  }
+
   Future<List<Map<String, dynamic>>> listUsers() async {
     if (AppConfig.demoMode) {
       return [
@@ -64,6 +88,59 @@ class FirestoreService {
     }
     final snap = await _db!.collection('users').orderBy('createdAt', descending: true).get();
     return snap.docs.map((d) => {'uid': d.id, ...d.data()}).toList();
+  }
+
+  Stream<List<Map<String, dynamic>>> usersStream() {
+    if (AppConfig.demoMode) {
+      return Stream.value([
+        {'uid': 'demo-user-oece', 'displayName': 'Usuario Demo', 'email': 'demo@oece.gob.pe', 'role': 'admin'},
+        {'uid': 'demo-user-2', 'displayName': 'María García', 'email': 'mgarcia@oece.gob.pe', 'role': 'user'},
+      ]);
+    }
+    return _db!
+        .collection('users')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snap) =>
+            snap.docs.map((d) => {'uid': d.id, ...d.data()}).toList());
+  }
+
+  // ─── Pre-asignación de roles por correo ───────────────────────────────────
+
+  Future<void> preassignRole(String email, String role) async {
+    if (AppConfig.demoMode) return;
+    final key = email.toLowerCase().replaceAll('.', '_dot_').replaceAll('@', '_at_');
+    await _db!.collection('email_roles').doc(key).set({
+      'email': email.toLowerCase(),
+      'role': role,
+      'assignedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<String?> getPreassignedRole(String email) async {
+    if (AppConfig.demoMode) return null;
+    try {
+      final key = email.toLowerCase().replaceAll('.', '_dot_').replaceAll('@', '_at_');
+      final snap = await _db!.collection('email_roles').doc(key).get();
+      return snap.data()?['role'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Stream<List<Map<String, dynamic>>> preassignedRolesStream() {
+    if (AppConfig.demoMode) return Stream.value([]);
+    return _db!
+        .collection('email_roles')
+        .orderBy('assignedAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs.map((d) => d.data()).toList());
+  }
+
+  Future<void> deletePreassignedRole(String email) async {
+    if (AppConfig.demoMode) return;
+    final key = email.toLowerCase().replaceAll('.', '_dot_').replaceAll('@', '_at_');
+    await _db!.collection('email_roles').doc(key).delete();
   }
 
   // ─── Casos de usuario ────────────────────────────────────────────────────────
