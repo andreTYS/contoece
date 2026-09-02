@@ -97,12 +97,63 @@ class FirestoreService {
         {'uid': 'demo-user-2', 'displayName': 'María García', 'email': 'mgarcia@oece.gob.pe', 'role': 'user'},
       ]);
     }
+    // Sin orderBy para evitar fallo cuando el campo no existe en todos los docs
     return _db!
         .collection('users')
-        .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snap) =>
-            snap.docs.map((d) => {'uid': d.id, ...d.data()}).toList());
+        .map((snap) {
+          final docs = snap.docs
+              .map((d) => {'uid': d.id, ...d.data()})
+              .toList();
+          // Ordenar en cliente: primero por lastLoginAt, luego createdAt
+          docs.sort((a, b) {
+            final aTs = a['lastLoginAt'] ?? a['createdAt'];
+            final bTs = b['lastLoginAt'] ?? b['createdAt'];
+            if (aTs == null && bTs == null) return 0;
+            if (aTs == null) return 1;
+            if (bTs == null) return -1;
+            try {
+              final aDt = (aTs as dynamic).toDate() as DateTime;
+              final bDt = (bTs as dynamic).toDate() as DateTime;
+              return bDt.compareTo(aDt);
+            } catch (_) {
+              return 0;
+            }
+          });
+          return docs;
+        });
+  }
+
+  // Registra manualmente un perfil de usuario por correo (para usuarios
+  // que ya se loguearon en Firebase Auth pero no tienen perfil en Firestore)
+  Future<void> registerUserProfile({
+    required String email,
+    String? displayName,
+    String role = 'user',
+  }) async {
+    if (AppConfig.demoMode) return;
+    final isAdmin = AppConfig.adminEmails.contains(email.toLowerCase());
+    final effectiveRole = isAdmin ? 'admin' : role;
+    // Buscar si ya existe por email
+    final existing = await _db!
+        .collection('users')
+        .where('email', isEqualTo: email.toLowerCase())
+        .limit(1)
+        .get();
+    if (existing.docs.isNotEmpty) {
+      // Actualizar rol si es diferente
+      await existing.docs.first.reference.update({'role': effectiveRole});
+      return;
+    }
+    // Crear nuevo perfil sin uid real (placeholder hasta que el usuario se loguee)
+    final docId = 'pending_${email.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_')}';
+    await _db!.collection('users').doc(docId).set({
+      'email': email.toLowerCase(),
+      'displayName': displayName ?? email.split('@').first,
+      'role': effectiveRole,
+      'createdAt': FieldValue.serverTimestamp(),
+      'isPending': true,
+    });
   }
 
   // ─── Pre-asignación de roles por correo ───────────────────────────────────

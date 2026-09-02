@@ -26,6 +26,7 @@ class _AdminScreenState extends State<AdminScreen>
 
   bool _loadingDocs = false;
   bool _uploading = false;
+  bool _usersPermissionError = false;
   String? _uploadStatus;
   Map<String, dynamic> _stats = {};
   String _userSearch = '';
@@ -50,8 +51,10 @@ class _AdminScreenState extends State<AdminScreen>
 
   void _subscribeUsers() {
     _usersSub = _firestoreService.usersStream().listen((users) {
-      if (mounted) setState(() => _users = users);
-    }, onError: (_) {});
+      if (mounted) setState(() { _users = users; _usersPermissionError = false; });
+    }, onError: (e) {
+      if (mounted) setState(() => _usersPermissionError = true);
+    });
   }
 
   void _subscribePreassigned() {
@@ -250,16 +253,26 @@ class _AdminScreenState extends State<AdminScreen>
             Icon(Icons.person_add_outlined,
                 color: AppTheme.primaryRed, size: 20),
             SizedBox(width: 8),
-            Text('Pre-asignar rol por correo'),
+            Text('Agregar / invitar usuario'),
           ]),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'El rol se asignará automáticamente cuando\nel usuario inicie sesión por primera vez.',
-                style: TextStyle(color: AppTheme.textGray, fontSize: 12.5, height: 1.4),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3EA),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.primaryRed.withOpacity(0.2)),
+                ),
+                child: const Text(
+                  'Si el usuario ya se logueó con Google, aparecerá en la lista inmediatamente.\n'
+                  'Si aún no se loguea, el rol quedará pre-asignado para cuando ingrese.',
+                  style: TextStyle(color: AppTheme.textDark, fontSize: 12, height: 1.4),
+                ),
               ),
+              const SizedBox(height: 14),
               const SizedBox(height: 16),
               TextField(
                 controller: emailCtrl,
@@ -328,11 +341,16 @@ class _AdminScreenState extends State<AdminScreen>
                 }
                 Navigator.pop(ctx);
                 try {
-                  await _firestoreService.preassignRole(email, selectedRole);
+                  // Registra en Firestore (crea perfil si no existe) + pre-asigna rol
+                  await Future.wait([
+                    _firestoreService.preassignRole(email, selectedRole),
+                    _firestoreService.registerUserProfile(
+                        email: email, role: selectedRole),
+                  ]);
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                       content: Text(
-                          'Rol "${_roleName(selectedRole)}" pre-asignado a $email'),
+                          '${_roleName(selectedRole)} registrado: $email'),
                       backgroundColor: Colors.green,
                       behavior: SnackBarBehavior.floating,
                     ));
@@ -639,6 +657,8 @@ class _AdminScreenState extends State<AdminScreen>
 
     return Column(
       children: [
+        // Permission error banner
+        if (_usersPermissionError) _buildPermissionBanner(),
         // Stats header
         Container(
           color: AppTheme.black,
@@ -716,6 +736,38 @@ class _AdminScreenState extends State<AdminScreen>
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _buildPermissionBanner() {
+    return Container(
+      color: Colors.amber.shade50,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(children: [
+        Icon(Icons.warning_amber_rounded, color: Colors.amber.shade700, size: 18),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Sin permiso para leer usuarios',
+                  style: TextStyle(
+                      color: Colors.amber.shade900,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12.5)),
+              Text(
+                'Actualiza las reglas de Firestore en Firebase Console '
+                'con el archivo firestore.rules del repositorio.',
+                style: TextStyle(color: Colors.amber.shade800, fontSize: 11.5),
+              ),
+            ],
+          ),
+        ),
+        TextButton(
+          onPressed: () => setState(() => _usersPermissionError = false),
+          child: const Text('OK', style: TextStyle(fontSize: 12)),
+        ),
+      ]),
     );
   }
 
