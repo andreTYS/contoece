@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  // ─── Paleta Rojo / Negro / Plateado ───────────────────────────────────────
-  static const Color primaryRed    = Color(0xFFC0152A);
-  static const Color darkRed       = Color(0xFF8B0010);
+  // ─── Paleta Naranja / Negro / Gris ────────────────────────────────────────
+  static const Color primaryRed    = Color(0xFFE8650A);  // Naranja principal
+  static const Color darkRed       = Color(0xFFB84D00);  // Naranja oscuro
   static const Color black         = Color(0xFF111111);
   static const Color charcoal      = Color(0xFF1C1C1E);
   static const Color silver        = Color(0xFF9DA5AE);
   static const Color lightSilver   = Color(0xFFE1E3E6);
-  static const Color background    = Color(0xFFF3F4F6);
-  static const Color userBubble    = Color(0xFFC0152A);
+  static const Color background    = Color(0xFFF5F5F5);
+  static const Color userBubble    = Color(0xFFE8650A);
   static const Color aiBubble      = Color(0xFFFFFFFF);
   static const Color textDark      = Color(0xFF111111);
   static const Color textGray      = Color(0xFF6B7280);
@@ -18,7 +18,7 @@ class AppTheme {
   static const Color primaryBlue   = primaryRed;
   static const Color secondaryBlue = darkRed;
   static const Color accentGold    = silver;
-  static const Color lightBlue     = Color(0xFFFBECEE);
+  static const Color lightBlue     = Color(0xFFFFF3EA);
   static const Color backgroundGray = background;
 
   static ThemeData get theme {
