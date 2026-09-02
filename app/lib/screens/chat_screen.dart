@@ -66,6 +66,15 @@ class _ChatScreenState extends State<ChatScreen> {
     '¿Causales de descalificación de un postor?',
   ];
 
+  static const _categories = [
+    (Icons.gavel_outlined, 'Procedimientos', '¿Cuáles son los tipos de procedimientos de selección según la Ley N° 30225?'),
+    (Icons.article_outlined, 'Normativa', '¿Cuáles son las principales directivas del OECE vigentes?'),
+    (Icons.business_center_outlined, 'Proveedores', '¿Qué requisitos debe cumplir un proveedor del Estado?'),
+    (Icons.calculate_outlined, 'Valor referencial', '¿Cómo se determina y aprueba el valor referencial?'),
+    (Icons.warning_amber_outlined, 'Penalidades', '¿Cuáles son las penalidades aplicables a los contratistas?'),
+    (Icons.find_in_page_outlined, 'Impugnaciones', '¿Cómo se presenta un recurso de apelación en contrataciones?'),
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -1470,6 +1479,11 @@ class _ChatScreenState extends State<ChatScreen> {
   // ─── Chat area ────────────────────────────────────────────────────────────
 
   Widget _buildChat() {
+    final showFollowUp = !_isLoading &&
+        _messages.length > 1 &&
+        _messages.last.role == MessageRole.assistant &&
+        !_messages.last.isLoading;
+
     return Column(
       children: [
         Expanded(
@@ -1481,11 +1495,15 @@ class _ChatScreenState extends State<ChatScreen> {
                   controller: _scrollController,
                   padding: const EdgeInsets.symmetric(
                       vertical: 16, horizontal: 4),
-                  itemCount:
-                      _messages.length + (_messages.length == 1 ? 1 : 0),
+                  itemCount: _messages.length +
+                      (_messages.length == 1 ? 1 : 0) +
+                      (showFollowUp ? 1 : 0),
                   itemBuilder: (_, i) {
                     if (_messages.length == 1 && i == 1) {
                       return _buildSuggestions();
+                    }
+                    if (showFollowUp && i == _messages.length) {
+                      return _buildFollowUpChips();
                     }
                     return ChatBubble(message: _messages[i]);
                   },
@@ -1498,33 +1516,87 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildSuggestions() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Category quick-select
           const Padding(
-            padding: EdgeInsets.only(left: 6, bottom: 10),
+            padding: EdgeInsets.only(left: 4, bottom: 10),
+            child: Text('Consulta por categoría',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textGray,
+                    letterSpacing: 0.5)),
+          ),
+          SizedBox(
+            height: 78,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _categories.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (_, i) {
+                final cat = _categories[i];
+                return GestureDetector(
+                  onTap: () => _send(cat.$3),
+                  child: Container(
+                    width: 100,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppTheme.lightSilver),
+                      boxShadow: [
+                        BoxShadow(
+                            color: Colors.black.withOpacity(0.04),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2)),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(cat.$1, color: AppTheme.primaryRed, size: 18),
+                        const SizedBox(height: 6),
+                        Text(cat.$2,
+                            style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.textDark),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 10),
             child: Text('Preguntas frecuentes',
                 style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
                     color: AppTheme.textGray,
                     letterSpacing: 0.5)),
           ),
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 7,
+            runSpacing: 7,
             children: _suggested
                 .map((q) => GestureDetector(
                       onTap: () => _send(q),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
+                            horizontal: 13, vertical: 8),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                              color: AppTheme.lightSilver),
+                          border: Border.all(color: AppTheme.lightSilver),
                           boxShadow: [
                             BoxShadow(
                                 color: Colors.black.withOpacity(0.04),
@@ -1533,8 +1605,99 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         child: Text(q,
                             style: const TextStyle(
-                                fontSize: 12.5,
+                                fontSize: 12,
                                 color: AppTheme.primaryRed)),
+                      ),
+                    ))
+                .toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Follow-up question chips shown below the last AI response
+  Widget _buildFollowUpChips() {
+    final lastAi = _messages.lastWhere(
+        (m) => m.role == MessageRole.assistant && !m.isLoading,
+        orElse: () => _messages.first);
+    final content = lastAi.content.toLowerCase();
+
+    List<String> followUps;
+    if (content.contains('procedimiento') || content.contains('selección') || content.contains('licitaci')) {
+      followUps = [
+        '¿Cuándo se usa una adjudicación simplificada?',
+        '¿Qué es una contratación directa?',
+        '¿Cómo se publica un proceso en SEACE?',
+      ];
+    } else if (content.contains('penalidad') || content.contains('sanción') || content.contains('infractor')) {
+      followUps = [
+        '¿Cómo se calcula la penalidad por mora?',
+        '¿Se puede apelar una sanción del OECE?',
+        '¿Qué es el Tribunal de Contrataciones?',
+      ];
+    } else if (content.contains('valor referencial') || content.contains('precio') || content.contains('presupuesto')) {
+      followUps = [
+        '¿Quién aprueba el valor referencial?',
+        '¿Cuándo se actualiza el valor referencial?',
+        '¿Qué pasa si las ofertas superan el valor referencial?',
+      ];
+    } else if (content.contains('proveedor') || content.contains('rnp') || content.contains('registro')) {
+      followUps = [
+        '¿Cómo se inscribe en el RNP?',
+        '¿Cuáles son las causales de inhabilitación?',
+        '¿Qué documentos se requieren para licitar?',
+      ];
+    } else {
+      followUps = [
+        '¿Puedes darme más detalles?',
+        '¿Qué artículo de la Ley N° 30225 regula esto?',
+        '¿Cuáles son las excepciones a esta regla?',
+      ];
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 8),
+            child: Row(children: [
+              Icon(Icons.auto_awesome, size: 12, color: AppTheme.primaryRed),
+              SizedBox(width: 4),
+              Text('Continúa preguntando',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textGray,
+                      letterSpacing: 0.3)),
+            ]),
+          ),
+          Wrap(
+            spacing: 7,
+            runSpacing: 7,
+            children: followUps
+                .map((q) => GestureDetector(
+                      onTap: () => _send(q),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF3EA),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                              color: AppTheme.primaryRed.withOpacity(0.25)),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.arrow_forward_rounded,
+                              size: 11, color: AppTheme.primaryRed),
+                          const SizedBox(width: 5),
+                          Text(q,
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.primaryRed)),
+                        ]),
                       ),
                     ))
                 .toList(),

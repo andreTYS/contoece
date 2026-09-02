@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'config/app_config.dart';
 import 'firebase_options.dart';
 import 'screens/chat_screen.dart';
+import 'screens/landing_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
 import 'services/firestore_service.dart';
@@ -60,7 +61,7 @@ class AuthGate extends StatelessWidget {
         if (snapshot.hasData && snapshot.data != null) {
           return _RoleGate(user: snapshot.data!);
         }
-        return const LoginScreen();
+        return const LandingScreen();
       },
     );
   }
