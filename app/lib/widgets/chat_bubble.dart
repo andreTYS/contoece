@@ -105,6 +105,21 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
+  // ─── Superscript citation markers ────────────────────────────────────────
+
+  static const _supMap = {
+    '0':'⁰','1':'¹','2':'²','3':'³','4':'⁴',
+    '5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹',
+  };
+
+  String _injectSuperscripts(String text) {
+    return text.replaceAllMapped(RegExp(r'\[(\d+)\]'), (m) {
+      final digits = m.group(1)!;
+      final sup = digits.split('').map((c) => _supMap[c] ?? c).join();
+      return sup;
+    });
+  }
+
   // ─── AI message ───────────────────────────────────────────────────────────
 
   Widget _buildAiMessage(BuildContext context) {
@@ -157,7 +172,7 @@ class _ChatBubbleState extends State<ChatBubble>
                   child: widget.message.isLoading
                       ? _buildTyping()
                       : MarkdownBody(
-                          data: widget.message.content,
+                          data: _injectSuperscripts(widget.message.content),
                           styleSheet: MarkdownStyleSheet(
                             p: const TextStyle(
                                 color: AppTheme.textDark,
@@ -426,12 +441,26 @@ class _CitationPanelState extends State<_CitationPanel> {
                 const Icon(Icons.menu_book_rounded,
                     size: 13, color: AppTheme.primaryRed),
                 const SizedBox(width: 6),
-                Text(
-                  '$count referencia${count == 1 ? '' : 's'} consultada${count == 1 ? '' : 's'}',
-                  style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.primaryRed),
+                RichText(
+                  text: TextSpan(
+                    style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.primaryRed),
+                    children: [
+                      const TextSpan(text: 'Fuentes citadas '),
+                      TextSpan(
+                        text: List.generate(
+                          count.clamp(0, 9),
+                          (i) => '¹²³⁴⁵⁶⁷⁸⁹'[i],
+                        ).join(),
+                        style: const TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.primaryRed),
+                      ),
+                    ],
+                  ),
                 ),
                 const Spacer(),
                 // Inline numbered badges (collapsed)
