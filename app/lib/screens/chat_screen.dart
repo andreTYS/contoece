@@ -43,6 +43,7 @@ class _ChatScreenState extends State<ChatScreen> {
   List<DocumentInfo> _sources = [];
   List<DocumentInfo> _userDocs = [];
   List<CaseModel> _cases = [];
+  List<String> _suggestedFromBackend = [];
   bool _isLoading = false;
   bool _isUploadingDoc = false;
   bool _serverConnected = false;
@@ -496,6 +497,9 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages.add(aiMsg);
         _isLoading = false;
         _serverConnected = true;
+        if (res.suggestedQuestions.isNotEmpty) {
+          _suggestedFromBackend = res.suggestedQuestions;
+        }
       });
       if (cid != null && cid.isNotEmpty) {
         try { await _firestoreService.saveCaseMessage(uid, cid, aiMsg); } catch (_) {}
@@ -1618,42 +1622,48 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Follow-up question chips shown below the last AI response
   Widget _buildFollowUpChips() {
-    final lastAi = _messages.lastWhere(
-        (m) => m.role == MessageRole.assistant && !m.isLoading,
-        orElse: () => _messages.first);
-    final content = lastAi.content.toLowerCase();
-
+    // Usa preguntas sugeridas del backend (generadas por IA basadas en la respuesta)
+    // Si el backend no devolvió sugerencias, usa el fallback por palabras clave
     List<String> followUps;
-    if (content.contains('procedimiento') || content.contains('selección') || content.contains('licitaci')) {
-      followUps = [
-        '¿Cuándo se usa una adjudicación simplificada?',
-        '¿Qué es una contratación directa?',
-        '¿Cómo se publica un proceso en SEACE?',
-      ];
-    } else if (content.contains('penalidad') || content.contains('sanción') || content.contains('infractor')) {
-      followUps = [
-        '¿Cómo se calcula la penalidad por mora?',
-        '¿Se puede apelar una sanción del OECE?',
-        '¿Qué es el Tribunal de Contrataciones?',
-      ];
-    } else if (content.contains('valor referencial') || content.contains('precio') || content.contains('presupuesto')) {
-      followUps = [
-        '¿Quién aprueba el valor referencial?',
-        '¿Cuándo se actualiza el valor referencial?',
-        '¿Qué pasa si las ofertas superan el valor referencial?',
-      ];
-    } else if (content.contains('proveedor') || content.contains('rnp') || content.contains('registro')) {
-      followUps = [
-        '¿Cómo se inscribe en el RNP?',
-        '¿Cuáles son las causales de inhabilitación?',
-        '¿Qué documentos se requieren para licitar?',
-      ];
+    if (_suggestedFromBackend.isNotEmpty) {
+      followUps = _suggestedFromBackend;
     } else {
-      followUps = [
-        '¿Puedes darme más detalles?',
-        '¿Qué artículo de la Ley N° 30225 regula esto?',
-        '¿Cuáles son las excepciones a esta regla?',
-      ];
+      final lastAi = _messages.lastWhere(
+          (m) => m.role == MessageRole.assistant && !m.isLoading,
+          orElse: () => _messages.first);
+      final content = lastAi.content.toLowerCase();
+
+      if (content.contains('procedimiento') || content.contains('selección') || content.contains('licitaci')) {
+        followUps = [
+          '¿Cuándo se usa una adjudicación simplificada?',
+          '¿Qué es una contratación directa?',
+          '¿Cómo se publica un proceso en SEACE?',
+        ];
+      } else if (content.contains('penalidad') || content.contains('sanción') || content.contains('infractor')) {
+        followUps = [
+          '¿Cómo se calcula la penalidad por mora?',
+          '¿Se puede apelar una sanción del TCP?',
+          '¿Qué es el Tribunal de Contrataciones?',
+        ];
+      } else if (content.contains('valor referencial') || content.contains('precio') || content.contains('presupuesto')) {
+        followUps = [
+          '¿Quién aprueba el valor referencial?',
+          '¿Cuándo se actualiza el valor referencial?',
+          '¿Qué pasa si las ofertas superan el valor referencial?',
+        ];
+      } else if (content.contains('proveedor') || content.contains('rnp') || content.contains('registro')) {
+        followUps = [
+          '¿Cómo se inscribe en el RNP?',
+          '¿Cuáles son las causales de inhabilitación?',
+          '¿Qué documentos se requieren para licitar?',
+        ];
+      } else {
+        followUps = [
+          '¿Puedes darme más detalles?',
+          '¿Qué artículo de la Ley N° 32069 regula esto?',
+          '¿Cuáles son las excepciones a esta regla?',
+        ];
+      }
     }
 
     return Padding(

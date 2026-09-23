@@ -1,6 +1,13 @@
 """
 OECE-IA - Servidor de IA para Contrataciones Públicas del Estado Peruano
-Desarrollado con FastAPI + Gemini API (google-genai) + ChromaDB (RAG)
+FastAPI + Gemini API + ChromaDB (RAG)
+
+Fusión con rag-compras-publicas (M. Orellana):
+  - Verificación de citas (citas.py)
+  - Instrucciones de estructura, precisión, jerarquía, cruce y registro
+  - Jerarquía de autoridad en reranking: Ley > Reglamento > Directivas > Opiniones
+  - Preguntas sugeridas post-respuesta
+  - Ley N° 32069 + DS 009-2025-EF como normativa principal
 """
 
 import asyncio
@@ -8,6 +15,7 @@ import hashlib
 import logging
 import os
 import re
+import json
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
@@ -15,7 +23,6 @@ from pathlib import Path
 from typing import Optional
 
 import chromadb
-import json
 import requests as http_requests
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from dotenv import load_dotenv
@@ -26,82 +33,170 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from citas import verificar_citas
+
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("oece-ia")
 
-GEMINI_API_KEY        = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL          = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_API_KEY         = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL           = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
-CHROMA_DB_PATH        = os.getenv("CHROMA_DB_PATH", "./chroma_db")
-ALLOWED_ORIGINS       = os.getenv("ALLOWED_ORIGINS", "*").split(",")
-CHUNK_SIZE   = 800
+CHROMA_DB_PATH         = os.getenv("CHROMA_DB_PATH", "./chroma_db")
+ALLOWED_ORIGINS        = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+CHUNK_SIZE    = 800
 CHUNK_OVERLAP = 150
 
-SYSTEM_PROMPT = """Eres **OECE-IA**, el asistente virtual oficial especializado en contrataciones públicas del Estado peruano, desarrollado para apoyar a funcionarios, servidores públicos y proveedores del Estado.
+# ─── Jerarquía de autoridad (menor índice = mayor autoridad) ─────────────────
+_ORDEN_AUTORIDAD = ("ley", "reglamento", "directiva", "opinion", "general")
+_PESO_AUTORIDAD  = {cat: round(0.05 * i, 3) for i, cat in enumerate(_ORDEN_AUTORIDAD)}
 
-## Tu misión
-Proporcionar información precisa, confiable y actualizada sobre el sistema de contrataciones públicas del Perú, basándote en la normativa vigente y en los documentos de la base de conocimientos de la OECE.
 
-## Tu personalidad
-- Profesional, formal y confiable
-- Empático y paciente con el usuario
-- Preciso y directo en tus respuestas
-- **NO uses emojis en ninguna respuesta** — el tono es institucional y formal
-- Escribe en español neutro, sin coloquialismos ni expresiones informales
+def _categoria_de_fuente(source: str) -> str:
+    s = source.lower()
+    if re.search(r'(ley[\s\-_]*(general|32069|30225)|32069|30225|decreto.legislativo)', s):
+        return "ley"
+    if re.search(r'(reglamento|344.2018|009.202[45])', s):
+        return "reglamento"
+    if "directiva" in s:
+        return "directiva"
+    if re.search(r'opini[oó]n', s):
+        return "opinion"
+    return "general"
 
-## Marco normativo vigente (actualizado 2024)
-- **Decreto Legislativo N° 1568** — Nueva Ley de Contrataciones Públicas (vigente desde 2024), que reemplaza progresivamente a la Ley N° 30225
-- **D.S. N° 009-2024-EF** — Reglamento de la Nueva Ley de Contrataciones Públicas
-- **Ley N° 30225** y sus modificatorias (DL 1341, DL 1444, DL 1471) — aún aplicable en procesos en transición
-- **D.S. N° 344-2018-EF** y modificatorias — Reglamento anterior (aplicable a procesos iniciados bajo Ley 30225)
-- **Contrataciones Menores** (antes denominadas "Contrataciones por montos iguales o inferiores a 8 UIT") — reguladas en el Art. 5 del DL 1568 y directivas OECE vigentes
-- Directivas y pronunciamientos de la OECE
-- Opiniones del OECE, resoluciones del Tribunal de Contrataciones del Estado
 
-## Temas en los que puedes ayudar
-- Nueva Ley de Contrataciones Públicas (DL 1568) y su Reglamento (DS 009-2024-EF)
-- Ley N° 30225 y modificatorias (procesos en transición)
-- Contrataciones menores (≤ 8 UIT): requisitos, proceso, excepciones
-- Procedimientos de selección: Licitación Pública, Concurso Público, Adjudicación Simplificada, Subasta Inversa Electrónica, Contratación Directa, Comparación de Precios
-- Sistema Electrónico de Contrataciones del Estado (SEACE)
-- Registro Nacional de Proveedores (RNP)
-- Elaboración de bases, TDR y expedientes técnicos
-- Ejecución contractual, adicionales de obra y prestaciones adicionales
-- Infracciones y sanciones del Tribunal de Contrataciones
-- Resoluciones y pronunciamientos de la OECE
-- **Análisis de documentos propios del usuario** (contratos, expedientes, bases, TDR, actas, resoluciones, etc.)
+def _nombre_legible(source: str) -> str:
+    s = source.lower()
+    if re.search(r'ley.general.*contratac|32069', s) and "reglamento" not in s:
+        return "Ley N° 32069"
+    if re.search(r'reglamento.*(32069|009.2025|009.2024)', s) or re.search(r'009.202[45].*ef', s):
+        return "Reglamento (DS 009-2025-EF)"
+    if "30225" in s and "reglamento" not in s:
+        return "Ley N° 30225"
+    if "344-2018" in s or "344_2018" in s:
+        return "Reglamento (DS 344-2018-EF)"
+    name = re.sub(r'\.(pdf|docx|txt|md)$', '', source, flags=re.IGNORECASE)
+    name = re.sub(r'^\d+[-_]', '', name)
+    name = name.replace('-', ' ').replace('_', ' ').strip()
+    return name[:80] if name else source
 
-## REGLAS DE CITACIÓN — OBLIGATORIAS
-Cuando respondas usando información de los documentos de la base de conocimientos numerados como [1], [2], [3], etc.:
-1. **Incluye el número de cita** `[1]` al final de cada oración o párrafo donde uses esa fuente. Ejemplo: *"El plazo máximo para subsanar observaciones es de cinco (5) días hábiles [1]."*
-2. Si combinas varias fuentes en un párrafo, cita todas: `[1][2]`
-3. Si la información proviene de tu conocimiento de la normativa (sin documento específico), cita la norma: *(DL 1568, Art. X)* o *(DS 009-2024-EF, Art. X)*
-4. Nunca inventes artículos ni normas que no existan.
 
-## Reglas generales
-1. Responde consultas relacionadas con contrataciones públicas del Estado peruano.
-2. Cuando el usuario haya subido documentos a su caso ("DOCUMENTOS PROPIOS DEL USUARIO"), analízalos y responde sobre su contenido.
-3. Si te preguntan sobre temas completamente ajenos, responde: *"Mi especialidad es el sistema de contrataciones públicas. ¿Tienes alguna consulta en ese ámbito donde pueda ayudarte?"*
-4. Usa la base de conocimientos prioritariamente; si no tienes información suficiente, indícalo y sugiere consultar la página oficial de la OECE.
-5. Usa formato Markdown para organizar tus respuestas (negritas, listas, tablas cuando aplique).
+def _formato_cita(meta: dict) -> str:
+    source   = meta.get("source", "Documento")
+    tipo     = meta.get("tipo_referencia", "")
+    ref      = meta.get("referencia", "") or meta.get("articulo_num", "")
+    nombre   = _nombre_legible(source)
+    if tipo == "articulo" and ref:
+        return f"{nombre}, Art. {ref}"
+    if tipo == "numeral" and ref:
+        return f"{nombre}, Num. {ref}"
+    if tipo == "opinion" and ref:
+        return f"Opinión {ref}"
+    if ref:
+        return f"{nombre}, {ref}"
+    return nombre
 
-## Información de contacto OECE
-- Web oficial: www.gob.pe/oece
-- SEACE: seace.gob.pe
-- Soporte técnico de esta app: WhatsApp +51 910 561 256
+
+# ─── System prompt + instrucciones (fusión con rag-compras-publicas) ─────────
+
+GUARDRAIL = (
+    "Tu ÚNICA fuente de verdad es el contexto normativo que se te proporciona. "
+    "Tienes estrictamente prohibido usar conocimiento previo o externo no incluido en ese contexto. "
+    "Si la respuesta no se encuentra en el contexto, responde textualmente: "
+    "\"De acuerdo con el marco normativo cargado en el sistema, no dispongo de la información "
+    "exacta para responder a esta consulta\". No asumas, no deduzcas plazos y no inventes artículos."
+)
+
+INSTRUCCION_CITAS = (
+    "FORMATO DE CITAS: tras cada afirmación, coloca el marcador [N] del/los fragmento(s) "
+    "recuperados que la respaldan. Ejemplo: 'El plazo es de cinco días hábiles [1].' "
+    "Usa solo números de fragmentos existentes; no inventes marcadores."
+)
+
+INSTRUCCION_PRECISION = (
+    "PRECISIÓN: si el usuario cita una norma de forma imprecisa pero el contexto SÍ contiene "
+    "la norma pertinente, RESPONDE con base en el contexto y ACLARA la referencia correcta. "
+    "Recurre al 'no dispongo' SOLO cuando el contexto realmente no la contenga."
+)
+
+INSTRUCCION_JERARQUIA = (
+    "JERARQUÍA AL RESPONDER: estructura la respuesta apoyándote PRIMERO en la fuente de mayor "
+    "autoridad (Ley → Reglamento → Directivas → Opiniones/Resoluciones). Las opiniones y "
+    "resoluciones son apoyo o aclaración; no deben ser la fuente principal cuando hay Ley o "
+    "Reglamento aplicable en el contexto."
+)
+
+INSTRUCCION_ESTRUCTURA = (
+    "ESTRUCTURA Y COMPLETITUD:\n"
+    "1. ENCUADRE: abre situando la figura en su marco normativo (Ley y Reglamento).\n"
+    "2. ENUMERA LO QUE LA NORMA ENUMERA: si hay una lista taxativa en el contexto, "
+    "reprodúcela COMPLETA; prohibido resumir con 'entre otros' o '...' si los ítems están.\n"
+    "3. LISTAS CON GLOSA: presenta enumeraciones como lista con breve explicación de cada ítem.\n"
+    "4. QUIÉN DECIDE: cuando la norma asigne una competencia, nómbrala explícitamente.\n"
+    "5. LIMITACIONES Y EXCEPCIONES: nómbralas concretas, no las insinúes.\n"
+    "6. SIN BLOQUE FINAL DE REFERENCIAS: el sistema muestra automáticamente las fuentes citadas; "
+    "no agregues un bloque 'Referencias' al final. Los marcadores [N] en línea SÍ se mantienen."
+)
+
+INSTRUCCION_CRUCE = (
+    "CRUCE LEY-REGLAMENTO: si en el contexto hay artículos de la Ley Y del Reglamento sobre el "
+    "mismo tema, menciona ambos indicando la relación ('regulado en Art. X de la Ley [n] y "
+    "desarrollado en Art. Y del Reglamento [n]'). Solo cruza normas PRESENTES en el contexto."
+)
+
+INSTRUCCION_REGISTRO = (
+    "REGISTRO: formal, técnico-legal, apto para un informe institucional. Usa negritas (**...**) "
+    "para ideas fuerza y términos clave. NO uses emojis. Adapta la extensión a la complejidad."
+)
+
+SYSTEM_PROMPT = f"""Eres **OECE-IA**, el asistente virtual oficial especializado en contrataciones públicas del Estado peruano.
+
+## Marco normativo vigente (2025)
+- **Ley N° 32069** — Ley General de Contrataciones Públicas (nueva ley vigente desde 2024)
+- **DS 009-2025-EF** — Reglamento de la Ley N° 32069
+- **Ley N° 30225** y modificatorias (DL 1341, DL 1444, DL 1471) — para procesos en transición
+- **DS 344-2018-EF** — Reglamento anterior (aplicable a procesos iniciados bajo Ley 30225)
+- **Contrataciones Menores (≤ 8 UIT)** — Art. 5 de la Ley 32069 y directivas OECE vigentes
+- Directivas, opiniones y resoluciones del Tribunal de Contrataciones del Estado (TCP)
+
+## Temas que cubres
+- Ley 32069 y DS 009-2025-EF (procedimientos, plazos, requisitos, sanciones)
+- Ley 30225 y DS 344-2018-EF (procesos en transición)
+- Contrataciones menores: requisitos, excepciones, proceso
+- Procedimientos de selección: Licitación Pública, Concurso Público, Adjudicación Simplificada, Subasta Inversa, Contratación Directa, Comparación de Precios
+- SEACE, RNP, TDR, expedientes técnicos, ejecución contractual
+- Infracciones, sanciones y resoluciones del TCP
+- **Análisis de documentos propios del usuario** (contratos, bases, TDR, actas, etc.)
+
+## Reglas
+{GUARDRAIL}
+
+1. Responde consultas de contrataciones públicas. Si el tema es completamente ajeno, responde: *"Mi especialidad es el sistema de contrataciones públicas. ¿Tienes alguna consulta en ese ámbito?"*
+2. Cuando el usuario haya subido documentos a su caso, analízalos y responde sobre su contenido.
+3. Usa formato Markdown (negritas, listas, tablas cuando aplique).
+
+## Contacto OECE
+- Web: www.gob.pe/oece | SEACE: seace.gob.pe | Soporte: WhatsApp +51 910 561 256
 """
+
+
+# ─── Instrucciones de sugerencias ────────────────────────────────────────────
+INSTRUCCION_SUGERENCIAS = (
+    "A partir de la consulta y la respuesta dada, propón EXACTAMENTE 3 preguntas de "
+    "PROFUNDIZACIÓN sobre el MISMO tema normativo. Requisitos: (a) que profundice sin repetir "
+    "lo ya respondido; (b) respondible con la Ley 32069, su Reglamento o directivas OECE; "
+    "(c) en español, clara, breve y autocontenida. "
+    "Devuelve ÚNICAMENTE un arreglo JSON de 3 cadenas, sin texto adicional. "
+    'Ejemplo: ["¿...?", "¿...?", "¿...?"]'
+)
+
 
 # ─── Cliente Gemini global ────────────────────────────────────────────────────
 gemini_client: Optional[genai.Client] = None
 
 
-# ─── Embedding con Gemini ─────────────────────────────────────────────────────
-
 class GeminiEmbeddingFunction(EmbeddingFunction):
-    """Embedding sincrónico usando Gemini REST API directa (evita problemas de versión SDK)."""
-
     _BATCH_SIZE = 20
 
     def __call__(self, input: Documents) -> Embeddings:
@@ -131,14 +226,12 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
         return all_embeddings
 
 
-# ─── Estado global ────────────────────────────────────────────────────────────
 chroma_client_instance: Optional[chromadb.PersistentClient] = None
 chroma_main_collection: Optional[chromadb.Collection] = None
 embedding_fn: Optional[GeminiEmbeddingFunction] = None
 
 
 def _init_collection(client: chromadb.PersistentClient, emb_fn: GeminiEmbeddingFunction, name: str) -> chromadb.Collection:
-    """Obtiene o crea una colección; si hay conflicto de embedding la recrea vacía."""
     try:
         return client.get_or_create_collection(
             name=name,
@@ -147,7 +240,7 @@ def _init_collection(client: chromadb.PersistentClient, emb_fn: GeminiEmbeddingF
         )
     except ValueError as e:
         if "conflict" in str(e).lower() or "embedding function" in str(e).lower():
-            logger.warning(f"Conflicto de embedding en '{name}'. Recreando colección (se pierden los documentos anteriores)...")
+            logger.warning(f"Conflicto de embedding en '{name}'. Recreando colección...")
             client.delete_collection(name)
             return client.create_collection(
                 name=name,
@@ -165,7 +258,7 @@ async def lifespan(app: FastAPI):
         logger.error("GEMINI_API_KEY no configurada.")
     else:
         gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-        logger.info(f"Gemini configurado. Modelo: {GEMINI_MODEL} | Embedding: {GEMINI_EMBEDDING_MODEL}")
+        logger.info(f"Gemini: {GEMINI_MODEL} | Embedding: {GEMINI_EMBEDDING_MODEL}")
 
     try:
         chroma_client_instance = chromadb.PersistentClient(path=CHROMA_DB_PATH)
@@ -182,7 +275,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OECE-IA API",
     description="API del Asistente IA de Contrataciones Públicas - OECE Perú",
-    version="3.1.0",
+    version="4.0.0",
     lifespan=lifespan,
 )
 
@@ -214,6 +307,7 @@ class ChatResponse(BaseModel):
     sources: list[str] = []
     user_sources: list[str] = []
     documents_found: int = 0
+    suggested_questions: list[str] = []
 
 
 class HealthResponse(BaseModel):
@@ -314,14 +408,26 @@ def _ingest_to_collection(collection, file_bytes, file_name, ext, extra_meta):
     except Exception:
         pass
 
-    chunks = _split_text(text)
-    ids = [str(uuid.uuid4()) for _ in chunks]
-    metadatas = [
-        {"source": file_name, "file_hash": fhash, "chunk_index": i, "total_chunks": len(chunks), **extra_meta}
-        for i in range(len(chunks))
-    ]
-    collection.add(documents=chunks, ids=ids, metadatas=metadatas)
-    return {"message": f"'{file_name}' ingestado.", "chunks_added": len(chunks), "source": file_name}
+    # Chunking consciente del tipo (artículos para leyes/reglamentos)
+    from ingest_smart import smart_chunk
+    chunks_data = smart_chunk(text, file_name)
+
+    ids = [str(uuid.uuid4()) for _ in chunks_data]
+    metadatas = []
+    for i, cd in enumerate(chunks_data):
+        meta = {
+            "source": file_name,
+            "file_hash": fhash,
+            "chunk_index": i,
+            "total_chunks": len(chunks_data),
+            **cd.get("meta", {}),
+            **extra_meta,
+        }
+        metadatas.append(meta)
+
+    documents = [cd["text"] for cd in chunks_data]
+    collection.add(documents=documents, ids=ids, metadatas=metadatas)
+    return {"message": f"'{file_name}' ingestado.", "chunks_added": len(chunks_data), "source": file_name}
 
 
 def _list_collection_docs(collection, where=None):
@@ -372,15 +478,15 @@ async def _call_gemini(messages: list[dict], retries: int = 4) -> str:
         except Exception as e:
             last_error = e
             if _is_quota_error(e):
-                wait = 15 * (2 ** attempt)  # 15s, 30s, 60s, 120s
-                logger.warning(f"Gemini rate limit (intento {attempt + 1}/{retries}). Reintentando en {wait}s...")
+                wait = 15 * (2 ** attempt)
+                logger.warning(f"Gemini rate limit (intento {attempt + 1}/{retries}). Esperando {wait}s...")
                 await asyncio.sleep(wait)
             else:
                 break
     if _is_quota_error(last_error):
         raise HTTPException(
             status_code=429,
-            detail="El servicio de IA está temporalmente saturado. Por favor espera unos minutos e intenta de nuevo.",
+            detail="El servicio de IA está temporalmente saturado. Por favor espera unos minutos.",
         )
     raise last_error
 
@@ -405,58 +511,91 @@ async def _stream_gemini(messages: list[dict]):
         except Exception as e:
             last_error = e
             if _is_quota_error(e) and attempt < 2:
-                wait = 15 * (2 ** attempt)  # 15s, 30s
-                logger.warning(f"Gemini stream rate limit (intento {attempt + 1}/3). Reintentando en {wait}s...")
+                wait = 15 * (2 ** attempt)
+                logger.warning(f"Gemini stream rate limit (intento {attempt + 1}/3). Esperando {wait}s...")
                 await asyncio.sleep(wait)
             else:
                 break
     if _is_quota_error(last_error):
-        raise HTTPException(
-            status_code=429,
-            detail="El servicio de IA está temporalmente saturado. Por favor espera unos minutos e intenta de nuevo.",
-        )
+        raise HTTPException(status_code=429, detail="Servicio saturado. Espera unos minutos.")
     raise last_error
 
 
-# ─── Endpoints ────────────────────────────────────────────────────────────────
+async def _generar_sugerencias(pregunta: str, respuesta: str) -> list[str]:
+    """Genera 3 preguntas de profundización (llamada aislada, no afecta la respuesta)."""
+    if not gemini_client or not respuesta.strip():
+        return []
+    try:
+        prompt = (
+            INSTRUCCION_SUGERENCIAS + "\n\n"
+            f"CONSULTA DEL USUARIO:\n{pregunta.strip()}\n\n"
+            f"RESPUESTA DADA:\n{respuesta.strip()[:4000]}"
+        )
+        chat = gemini_client.aio.chats.create(
+            model=GEMINI_MODEL,
+            config=types.GenerateContentConfig(temperature=0.4),
+            history=[],
+        )
+        resp = await chat.send_message(prompt)
+        text = (resp.text or "").strip()
+        text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text, flags=re.IGNORECASE)
+        m = re.search(r'\[.*\]', text, flags=re.DOTALL)
+        if m:
+            datos = json.loads(m.group(0))
+            if isinstance(datos, list):
+                return [str(x).strip() for x in datos if str(x).strip()][:3]
+    except Exception:
+        pass
+    return []
 
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    doc_count = chroma_main_collection.count() if chroma_main_collection else 0
-    return HealthResponse(status="ok", documents_in_db=doc_count, model=GEMINI_MODEL)
 
+# ─── RAG context ─────────────────────────────────────────────────────────────
 
-def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str], int]:
+def _build_rag_context(request: "ChatRequest") -> tuple[str, list[str], list[str], int]:
     context_text, sources, user_sources, documents_found = "", [], [], 0
 
     if chroma_main_collection and chroma_main_collection.count() > 0:
         try:
             results = chroma_main_collection.query(
                 query_texts=[request.message],
-                n_results=min(5, chroma_main_collection.count()),
+                n_results=min(8, chroma_main_collection.count()),
                 include=["documents", "metadatas", "distances"],
             )
-            docs = results.get("documents", [[]])[0]
-            metas = results.get("metadatas", [[]])[0]
+            docs      = results.get("documents", [[]])[0]
+            metas     = results.get("metadatas", [[]])[0]
             distances = results.get("distances", [[]])[0]
-            relevant = [(d, m) for d, m, dist in zip(docs, metas, distances) if dist < 0.6]
+
+            # Rerank por jerarquía de autoridad (Ley > Reglamento > Directiva > Opinión)
+            candidates = [
+                (d, m, dist)
+                for d, m, dist in zip(docs, metas, distances)
+                if dist < 0.65
+            ]
+            candidates.sort(
+                key=lambda t: t[2] + _PESO_AUTORIDAD.get(
+                    t[1].get("categoria") or _categoria_de_fuente(t[1].get("source", "")),
+                    0.10
+                )
+            )
+            relevant = candidates[:5]
+
             if relevant:
                 documents_found += len(relevant)
-                context_text = "\n\n---\n**INFORMACION DE LA BASE DE CONOCIMIENTOS OECE (cita con [N] el número correspondiente):**\n"
-                for i, (doc, meta) in enumerate(relevant, 1):
-                    source = meta.get("source", "Documento OECE")
-                    page = meta.get("page", "")
-                    context_text += f"\n**[{i}]** *Fuente: {source}{f', pag. {page}' if page else ''}*\n{doc}\n"
-                    label = f"{source}{f' (pag. {page})' if page else ''}"
-                    if label not in sources:
-                        sources.append(label)
+                context_text = (
+                    "\n\n---\n"
+                    "**CONTEXTO NORMATIVO (cita cada fragmento con [N] en tu respuesta):**\n"
+                )
+                for i, (doc, meta, _dist) in enumerate(relevant, 1):
+                    cita = _formato_cita(meta)
+                    context_text += f"\n**[{i}]** *{cita}*\n{doc}\n"
+                    if cita not in sources:
+                        sources.append(cita)
         except Exception as e:
             logger.warning(f"Error RAG principal: {e}")
 
     user_col = _get_user_collection(request.user_id)
     if user_col and user_col.count() > 0:
         try:
-            # Count only docs matching the case filter to avoid n_results > matches error
             if request.case_id:
                 matching = user_col.get(where={"case_id": request.case_id})
                 count_for_query = len(matching.get("ids", []))
@@ -472,14 +611,20 @@ def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str],
                 if request.case_id:
                     q_kwargs["where"] = {"case_id": request.case_id}
                 u_results = user_col.query(**q_kwargs)
-                u_docs = u_results.get("documents", [[]])[0]
-                u_metas = u_results.get("metadatas", [[]])[0]
+                u_docs      = u_results.get("documents", [[]])[0]
+                u_metas     = u_results.get("metadatas", [[]])[0]
                 u_distances = u_results.get("distances", [[]])[0]
-                u_relevant = [(d, m) for d, m, dist in zip(u_docs, u_metas, u_distances) if dist < 0.65]
+                u_relevant  = [
+                    (d, m) for d, m, dist in zip(u_docs, u_metas, u_distances)
+                    if dist < 0.65
+                ]
                 if u_relevant:
                     documents_found += len(u_relevant)
                     user_offset = len(sources) + 1
-                    context_text += "\n\n---\n**DOCUMENTOS PROPIOS DEL USUARIO (cita con [N] el número correspondiente):**\n"
+                    context_text += (
+                        "\n\n---\n"
+                        "**DOCUMENTOS PROPIOS DEL USUARIO (cita con [N]):**\n"
+                    )
                     for i, (doc, meta) in enumerate(u_relevant, user_offset):
                         source = meta.get("source", "Archivo personal")
                         context_text += f"\n**[{i}]** *Archivo: {source}*\n{doc}\n"
@@ -491,11 +636,34 @@ def _build_rag_context(request: ChatRequest) -> tuple[str, list[str], list[str],
     return context_text, sources, user_sources, documents_found
 
 
+def _build_prompt(message: str, context_text: str) -> str:
+    instructions = "\n\n".join([
+        GUARDRAIL,
+        INSTRUCCION_PRECISION,
+        INSTRUCCION_JERARQUIA,
+        INSTRUCCION_ESTRUCTURA,
+        INSTRUCCION_CRUCE,
+        INSTRUCCION_CITAS,
+        INSTRUCCION_REGISTRO,
+    ])
+    if context_text:
+        return f"{context_text}\n\n{instructions}\n\nCONSULTA DEL USUARIO:\n{message}"
+    return message
+
+
+# ─── Endpoints ────────────────────────────────────────────────────────────────
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    doc_count = chroma_main_collection.count() if chroma_main_collection else 0
+    return HealthResponse(status="ok", documents_in_db=doc_count, model=GEMINI_MODEL)
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     context_text, sources, user_sources, documents_found = _build_rag_context(request)
     messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-6:]]
-    messages.append({"role": "user", "content": request.message + (context_text or "")})
+    messages.append({"role": "user", "content": _build_prompt(request.message, context_text)})
     try:
         answer = await _call_gemini(messages)
         logger.info(f"Chat | user={request.user_id} | case={request.case_id} | docs={documents_found}")
@@ -504,19 +672,44 @@ async def chat(request: ChatRequest):
     except Exception as e:
         logger.error(f"Error Gemini: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    return ChatResponse(response=answer, sources=sources, user_sources=user_sources, documents_found=documents_found)
+
+    # Verificar y limpiar citas alucinadas
+    check = verificar_citas(answer, documents_found)
+    answer = check["respuesta_limpia"]
+    if check["citas_invalidas"]:
+        logger.warning(f"Citas inventadas neutralizadas: {check['citas_invalidas']}")
+
+    # Preguntas sugeridas (llamada aislada, no bloquea la respuesta)
+    suggested = await _generar_sugerencias(request.message, answer)
+
+    return ChatResponse(
+        response=answer,
+        sources=sources,
+        user_sources=user_sources,
+        documents_found=documents_found,
+        suggested_questions=suggested,
+    )
 
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     context_text, sources, _, documents_found = _build_rag_context(request)
     messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-6:]]
-    messages.append({"role": "user", "content": request.message + (context_text or "")})
+    messages.append({"role": "user", "content": _build_prompt(request.message, context_text)})
 
     async def generate():
+        full_response = []
         try:
             async for token in _stream_gemini(messages):
+                full_response.append(token)
                 yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
+
+            # Verificar citas al finalizar
+            complete = "".join(full_response)
+            check = verificar_citas(complete, documents_found)
+            if check["citas_invalidas"]:
+                logger.warning(f"Stream — citas neutralizadas: {check['citas_invalidas']}")
+
             yield f"data: {json.dumps({'done': True, 'sources': sources, 'documents_found': documents_found})}\n\n"
             logger.info(f"Stream | user={request.user_id} | docs={documents_found}")
         except Exception as e:

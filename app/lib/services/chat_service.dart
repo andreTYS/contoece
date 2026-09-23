@@ -14,8 +14,13 @@ class RateLimitException implements Exception {
 class ChatResponse {
   final String response;
   final List<String> sources;
+  final List<String> suggestedQuestions;
 
-  ChatResponse({required this.response, this.sources = const []});
+  ChatResponse({
+    required this.response,
+    this.sources = const [],
+    this.suggestedQuestions = const [],
+  });
 }
 
 class ChatService {
@@ -55,7 +60,15 @@ class ChatService {
                 ?.map((s) => s.toString())
                 .toList() ??
             [];
-        return ChatResponse(response: data['response'], sources: sources);
+        final suggested = (data['suggested_questions'] as List<dynamic>?)
+                ?.map((s) => s.toString())
+                .toList() ??
+            [];
+        return ChatResponse(
+          response: data['response'],
+          sources: sources,
+          suggestedQuestions: suggested,
+        );
       } else if (response.statusCode == 504) {
         throw TimeoutException('El servidor tardó demasiado en responder.');
       } else if (response.statusCode == 429) {
