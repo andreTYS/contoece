@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -445,8 +446,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final uid = _uid;
     final cid = _activeCaseId;
 
-    // Build history BEFORE adding the user message — prevents sending duplicate
-    // user turns to the Anthropic API (consecutive user msgs are rejected).
     final history = _messages
         .where((m) => !m.isLoading && !m.id.startsWith('welcome'))
         .toList();
@@ -457,8 +456,11 @@ class _ChatScreenState extends State<ChatScreen> {
       role: MessageRole.user,
       timestamp: DateTime.now(),
     );
-    final loading = ChatMessage(
-      id: 'loading_${DateTime.now().millisecondsSinceEpoch}',
+
+    // Mensaje streaming — empieza vacío, se va llenando token a token
+    final streamingId = 'stream_${DateTime.now().millisecondsSinceEpoch}';
+    final streamingMsg = ChatMessage(
+      id: streamingId,
       content: '',
       role: MessageRole.assistant,
       timestamp: DateTime.now(),
@@ -467,7 +469,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _messages.add(userMsg);
-      _messages.add(loading);
+      _messages.add(streamingMsg);
       _isLoading = true;
     });
     _scrollToBottom();
@@ -478,35 +480,78 @@ class _ChatScreenState extends State<ChatScreen> {
       try { await _firestoreService.saveMessage(uid, userMsg).timeout(const Duration(seconds: 3)); } catch (_) {}
     }
 
+    final streamingIndex = _messages.indexWhere((m) => m.id == streamingId);
+    final StringBuffer accumulated = StringBuffer();
+    List<String> finalSources = [];
+    List<String> finalSuggested = [];
+
     try {
-      final res = await _chatService.sendMessage(
+      await for (final chunk in _chatService.streamMessage(
         message: text,
         userId: uid,
         history: history,
         caseId: cid ?? '',
-      );
-      final aiMsg = ChatMessage(
-        id: '${DateTime.now().millisecondsSinceEpoch}',
-        content: res.response,
-        role: MessageRole.assistant,
-        timestamp: DateTime.now(),
-        sources: res.sources,
-      );
-      setState(() {
-        _messages.remove(loading);
-        _messages.add(aiMsg);
-        _isLoading = false;
-        _serverConnected = true;
-        if (res.suggestedQuestions.isNotEmpty) {
-          _suggestedFromBackend = res.suggestedQuestions;
+      )) {
+        if (!mounted) break;
+
+        if (chunk.startsWith('\x00DONE\x00')) {
+          // Evento final con sources y suggested_questions
+          try {
+            final raw = chunk.substring(6);
+            final data = jsonDecode(raw) as Map<String, dynamic>;
+            finalSources = (data['sources'] as List<dynamic>?)
+                    ?.map((s) => s.toString())
+                    .toList() ??
+                [];
+            finalSuggested = (data['suggested_questions'] as List<dynamic>?)
+                    ?.map((s) => s.toString())
+                    .toList() ??
+                [];
+          } catch (_) {}
+          break;
         }
-      });
+
+        accumulated.write(chunk);
+        if (streamingIndex >= 0 && streamingIndex < _messages.length) {
+          setState(() {
+            _messages[streamingIndex] = ChatMessage(
+              id: streamingId,
+              content: accumulated.toString(),
+              role: MessageRole.assistant,
+              timestamp: streamingMsg.timestamp,
+              isLoading: false,
+            );
+          });
+          _scrollToBottom();
+        }
+      }
+
+      // Mensaje final con sources
+      final finalContent = accumulated.toString();
+      final aiMsg = ChatMessage(
+        id: streamingId,
+        content: finalContent,
+        role: MessageRole.assistant,
+        timestamp: streamingMsg.timestamp,
+        sources: finalSources,
+      );
+
+      if (mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == streamingId);
+          if (idx >= 0) _messages[idx] = aiMsg;
+          _isLoading = false;
+          _serverConnected = true;
+          if (finalSuggested.isNotEmpty) _suggestedFromBackend = finalSuggested;
+        });
+      }
+
       if (cid != null && cid.isNotEmpty) {
         try { await _firestoreService.saveCaseMessage(uid, cid, aiMsg); } catch (_) {}
       } else {
         try { await _firestoreService.saveMessage(uid, aiMsg); } catch (_) {}
       }
-      if (res.sources.isNotEmpty) _loadSources();
+      if (finalSources.isNotEmpty) _loadSources();
     } catch (e) {
       final isTimeout = e is TimeoutException ||
           e.toString().contains('tardó demasiado') ||
@@ -526,36 +571,39 @@ class _ChatScreenState extends State<ChatScreen> {
               ? 'Servicio saturado — intenta en unos minutos.'
               : 'Error de conexión.';
 
-      setState(() {
-        _messages.remove(loading);
-        _messages.add(ChatMessage(
-          id: '${DateTime.now().millisecondsSinceEpoch}',
-          content: errorContent,
-          role: MessageRole.assistant,
-          timestamp: DateTime.now(),
-        ));
-        _isLoading = false;
-        if (!isTimeout && !isRateLimit) _serverConnected = false;
-        _pendingRetryText = text;
-      });
+      if (mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == streamingId);
+          if (idx >= 0) {
+            _messages[idx] = ChatMessage(
+              id: streamingId,
+              content: errorContent,
+              role: MessageRole.assistant,
+              timestamp: streamingMsg.timestamp,
+            );
+          }
+          _isLoading = false;
+          if (!isTimeout && !isRateLimit) _serverConnected = false;
+          _pendingRetryText = text;
+        });
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(snackMsg),
-          duration: const Duration(seconds: 8),
-          action: SnackBarAction(
-            label: 'Reintentar',
-            onPressed: () {
-              final retryText = _pendingRetryText;
-              if (retryText != null && retryText.isNotEmpty) {
-                _pendingRetryText = null;
-                _send(retryText);
-              }
-            },
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(snackMsg),
+            duration: const Duration(seconds: 8),
+            action: SnackBarAction(
+              label: 'Reintentar',
+              onPressed: () {
+                final retryText = _pendingRetryText;
+                if (retryText != null && retryText.isNotEmpty) {
+                  _pendingRetryText = null;
+                  _send(retryText);
+                }
+              },
+            ),
           ),
-        ),
-      );
+        );
+      }
     }
     _scrollToBottom();
   }

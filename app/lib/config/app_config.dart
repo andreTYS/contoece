@@ -18,6 +18,7 @@ class AppConfig {
 
   // Endpoints admin
   static const String chatEndpoint = '/chat';
+  static const String chatStreamEndpoint = '/chat/stream';
   static const String healthEndpoint = '/health';
   static const String adminDocumentsEndpoint = '/admin/documents';
   static const String adminUploadEndpoint = '/admin/upload';

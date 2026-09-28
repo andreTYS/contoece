@@ -296,7 +296,7 @@ class ConversationMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=2000)
+    message: str = Field(..., min_length=1, max_length=8000)
     user_id: str = Field(default="anonymous")
     case_id: str = Field(default="")
     conversation_history: list[ConversationMessage] = Field(default=[])
@@ -662,7 +662,7 @@ async def health_check():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     context_text, sources, user_sources, documents_found = _build_rag_context(request)
-    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-6:]]
+    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-14:]]
     messages.append({"role": "user", "content": _build_prompt(request.message, context_text)})
     try:
         answer = await _call_gemini(messages)
@@ -694,7 +694,7 @@ async def chat(request: ChatRequest):
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     context_text, sources, _, documents_found = _build_rag_context(request)
-    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-6:]]
+    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history[-14:]]
     messages.append({"role": "user", "content": _build_prompt(request.message, context_text)})
 
     async def generate():
@@ -710,7 +710,8 @@ async def chat_stream(request: ChatRequest):
             if check["citas_invalidas"]:
                 logger.warning(f"Stream — citas neutralizadas: {check['citas_invalidas']}")
 
-            yield f"data: {json.dumps({'done': True, 'sources': sources, 'documents_found': documents_found})}\n\n"
+            suggested = await _generar_sugerencias(request.message, complete)
+            yield f"data: {json.dumps({'done': True, 'sources': sources, 'documents_found': documents_found, 'suggested_questions': suggested}, ensure_ascii=False)}\n\n"
             logger.info(f"Stream | user={request.user_id} | docs={documents_found}")
         except Exception as e:
             logger.error(f"Error stream Gemini: {e}")
