@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'config/app_config.dart';
 import 'firebase_options.dart';
 import 'screens/chat_screen.dart';
+import 'screens/landing_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
 import 'services/firestore_service.dart';
@@ -35,15 +36,17 @@ class OeceIaApp extends StatelessWidget {
   }
 }
 
+/// Modo demo: entra directo al chat sin login ni Firebase.
 class _DemoEntry extends StatelessWidget {
   const _DemoEntry();
 
   @override
   Widget build(BuildContext context) {
-    return const ChatScreen(role: 'admin');
+    return const ChatScreen(role: 'admin'); // admin para ver también el panel
   }
 }
 
+/// Flujo real: espera la sesión de Firebase y asigna rol.
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
@@ -58,7 +61,7 @@ class AuthGate extends StatelessWidget {
         if (snapshot.hasData && snapshot.data != null) {
           return _RoleGate(user: snapshot.data!);
         }
-        return const LoginScreen();
+        return const LandingScreen();
       },
     );
   }
@@ -99,7 +102,7 @@ class _UnauthorizedScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.primaryRed,
+      backgroundColor: AppTheme.primaryBlue,
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -149,7 +152,7 @@ class _UnauthorizedScreen extends StatelessWidget {
                 label: const Text('Cerrar sesión'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.white,
-                  foregroundColor: AppTheme.primaryRed,
+                  foregroundColor: AppTheme.primaryBlue,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 24, vertical: 14),
                   shape: RoundedRectangleBorder(
@@ -170,7 +173,7 @@ class _LoadingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
-      backgroundColor: AppTheme.primaryRed,
+      backgroundColor: AppTheme.primaryBlue,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -43,11 +44,13 @@ class _ChatScreenState extends State<ChatScreen> {
   List<DocumentInfo> _sources = [];
   List<DocumentInfo> _userDocs = [];
   List<CaseModel> _cases = [];
+  List<String> _suggestedFromBackend = [];
   bool _isLoading = false;
   bool _isUploadingDoc = false;
   bool _serverConnected = false;
   bool _historyLoaded = false;
   bool _casesLoaded = false;
+  bool _showDocsSidebar = false;
   String? _activeCaseId;
   String? _activeCaseName;
   String? _pendingRetryText;
@@ -63,6 +66,15 @@ class _ChatScreenState extends State<ChatScreen> {
     '¿Qué dice la Ley N° 30225 sobre contrataciones directas?',
     '¿Cómo se calcula el valor referencial?',
     '¿Causales de descalificación de un postor?',
+  ];
+
+  static const _categories = [
+    (Icons.gavel_outlined, 'Procedimientos', '¿Cuáles son los tipos de procedimientos de selección según la Ley N° 30225?'),
+    (Icons.article_outlined, 'Normativa', '¿Cuáles son las principales directivas del OECE vigentes?'),
+    (Icons.business_center_outlined, 'Proveedores', '¿Qué requisitos debe cumplir un proveedor del Estado?'),
+    (Icons.calculate_outlined, 'Valor referencial', '¿Cómo se determina y aprueba el valor referencial?'),
+    (Icons.warning_amber_outlined, 'Penalidades', '¿Cuáles son las penalidades aplicables a los contratistas?'),
+    (Icons.find_in_page_outlined, 'Impugnaciones', '¿Cómo se presenta un recurso de apelación en contrataciones?'),
   ];
 
   @override
@@ -214,7 +226,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   fontWeight: FontWeight.bold)),
                         ),
                         title: Text(
-                          doc.source.replaceAll(RegExp(r'\.\.\w+$'), ''),
+                          doc.source.replaceAll(RegExp(r'\.\w+$'), ''),
                           style: const TextStyle(fontSize: 13),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -444,8 +456,11 @@ class _ChatScreenState extends State<ChatScreen> {
       role: MessageRole.user,
       timestamp: DateTime.now(),
     );
-    final loading = ChatMessage(
-      id: 'loading_${DateTime.now().millisecondsSinceEpoch}',
+
+    // Mensaje streaming — empieza vacío, se va llenando token a token
+    final streamingId = 'stream_${DateTime.now().millisecondsSinceEpoch}';
+    final streamingMsg = ChatMessage(
+      id: streamingId,
       content: '',
       role: MessageRole.assistant,
       timestamp: DateTime.now(),
@@ -454,7 +469,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _messages.add(userMsg);
-      _messages.add(loading);
+      _messages.add(streamingMsg);
       _isLoading = true;
     });
     _scrollToBottom();
@@ -465,32 +480,78 @@ class _ChatScreenState extends State<ChatScreen> {
       try { await _firestoreService.saveMessage(uid, userMsg).timeout(const Duration(seconds: 3)); } catch (_) {}
     }
 
+    final streamingIndex = _messages.indexWhere((m) => m.id == streamingId);
+    final StringBuffer accumulated = StringBuffer();
+    List<String> finalSources = [];
+    List<String> finalSuggested = [];
+
     try {
-      final res = await _chatService.sendMessage(
+      await for (final chunk in _chatService.streamMessage(
         message: text,
         userId: uid,
         history: history,
         caseId: cid ?? '',
-      );
+      )) {
+        if (!mounted) break;
+
+        if (chunk.startsWith('\x00DONE\x00')) {
+          // Evento final con sources y suggested_questions
+          try {
+            final raw = chunk.substring(6);
+            final data = jsonDecode(raw) as Map<String, dynamic>;
+            finalSources = (data['sources'] as List<dynamic>?)
+                    ?.map((s) => s.toString())
+                    .toList() ??
+                [];
+            finalSuggested = (data['suggested_questions'] as List<dynamic>?)
+                    ?.map((s) => s.toString())
+                    .toList() ??
+                [];
+          } catch (_) {}
+          break;
+        }
+
+        accumulated.write(chunk);
+        if (streamingIndex >= 0 && streamingIndex < _messages.length) {
+          setState(() {
+            _messages[streamingIndex] = ChatMessage(
+              id: streamingId,
+              content: accumulated.toString(),
+              role: MessageRole.assistant,
+              timestamp: streamingMsg.timestamp,
+              isLoading: false,
+            );
+          });
+          _scrollToBottom();
+        }
+      }
+
+      // Mensaje final con sources
+      final finalContent = accumulated.toString();
       final aiMsg = ChatMessage(
-        id: '${DateTime.now().millisecondsSinceEpoch}',
-        content: res.response,
+        id: streamingId,
+        content: finalContent,
         role: MessageRole.assistant,
-        timestamp: DateTime.now(),
-        sources: res.sources,
+        timestamp: streamingMsg.timestamp,
+        sources: finalSources,
       );
-      setState(() {
-        _messages.remove(loading);
-        _messages.add(aiMsg);
-        _isLoading = false;
-        _serverConnected = true;
-      });
+
+      if (mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == streamingId);
+          if (idx >= 0) _messages[idx] = aiMsg;
+          _isLoading = false;
+          _serverConnected = true;
+          if (finalSuggested.isNotEmpty) _suggestedFromBackend = finalSuggested;
+        });
+      }
+
       if (cid != null && cid.isNotEmpty) {
         try { await _firestoreService.saveCaseMessage(uid, cid, aiMsg); } catch (_) {}
       } else {
         try { await _firestoreService.saveMessage(uid, aiMsg); } catch (_) {}
       }
-      if (res.sources.isNotEmpty) _loadSources();
+      if (finalSources.isNotEmpty) _loadSources();
     } catch (e) {
       final isTimeout = e is TimeoutException ||
           e.toString().contains('tardó demasiado') ||
@@ -510,36 +571,39 @@ class _ChatScreenState extends State<ChatScreen> {
               ? 'Servicio saturado — intenta en unos minutos.'
               : 'Error de conexión.';
 
-      setState(() {
-        _messages.remove(loading);
-        _messages.add(ChatMessage(
-          id: '${DateTime.now().millisecondsSinceEpoch}',
-          content: errorContent,
-          role: MessageRole.assistant,
-          timestamp: DateTime.now(),
-        ));
-        _isLoading = false;
-        if (!isTimeout && !isRateLimit) _serverConnected = false;
-        _pendingRetryText = text;
-      });
+      if (mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == streamingId);
+          if (idx >= 0) {
+            _messages[idx] = ChatMessage(
+              id: streamingId,
+              content: errorContent,
+              role: MessageRole.assistant,
+              timestamp: streamingMsg.timestamp,
+            );
+          }
+          _isLoading = false;
+          if (!isTimeout && !isRateLimit) _serverConnected = false;
+          _pendingRetryText = text;
+        });
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(snackMsg),
-          duration: const Duration(seconds: 8),
-          action: SnackBarAction(
-            label: 'Reintentar',
-            onPressed: () {
-              final retryText = _pendingRetryText;
-              if (retryText != null && retryText.isNotEmpty) {
-                _pendingRetryText = null;
-                _send(retryText);
-              }
-            },
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(snackMsg),
+            duration: const Duration(seconds: 8),
+            action: SnackBarAction(
+              label: 'Reintentar',
+              onPressed: () {
+                final retryText = _pendingRetryText;
+                if (retryText != null && retryText.isNotEmpty) {
+                  _pendingRetryText = null;
+                  _send(retryText);
+                }
+              },
+            ),
           ),
-        ),
-      );
+        );
+      }
     }
     _scrollToBottom();
   }
@@ -680,7 +744,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   _buildCasesSidebar(wide: isDesktop),
                   Expanded(child: _buildChat()),
-                  if (isDesktop && _sources.isNotEmpty) _buildSourcesPanel(),
+                  if (_activeCaseId != null)
+                    _buildCaseDocsPanel()
+                  else if (isDesktop && _sources.isNotEmpty)
+                    _buildSourcesPanel(),
                 ],
               ),
             ),
@@ -740,7 +807,31 @@ class _ChatScreenState extends State<ChatScreen> {
                     style: TextStyle(color: AppTheme.textGray, fontSize: 13),
                     overflow: TextOverflow.ellipsis),
           ),
-          if (isMobile && _sources.isNotEmpty)
+          if (isMobile && _activeCaseId != null)
+            IconButton(
+              icon: Stack(clipBehavior: Clip.none, children: [
+                const Icon(Icons.description_outlined,
+                    color: AppTheme.primaryRed, size: 22),
+                if (_userDocs.isNotEmpty)
+                  Positioned(
+                    top: -4, right: -4,
+                    child: Container(
+                      width: 14, height: 14,
+                      decoration: const BoxDecoration(
+                          color: AppTheme.primaryRed, shape: BoxShape.circle),
+                      child: Center(
+                        child: Text('${_userDocs.length}',
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 8,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+              ]),
+              onPressed: _showUserDocsSheet,
+              tooltip: 'Documentos del caso',
+            ),
+          if (isMobile && _activeCaseId == null && _sources.isNotEmpty)
             IconButton(
               icon: Badge(
                 label: Text('${_sources.length}'),
@@ -1127,6 +1218,196 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // ─── Case docs panel (right, desktop — NotebookLM style) ─────────────────
+
+  Widget _buildCaseDocsPanel() {
+    return Container(
+      width: 250,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(left: BorderSide(color: AppTheme.lightSilver)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 14, 8, 12),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: AppTheme.lightSilver)),
+            ),
+            child: Row(children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: AppTheme.lightBlue,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.folder_open,
+                    color: AppTheme.primaryRed, size: 16),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Documentos',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                              color: AppTheme.textDark)),
+                      Text(_activeCaseName ?? '',
+                          style: const TextStyle(
+                              color: AppTheme.textGray, fontSize: 11),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                    ]),
+              ),
+            ]),
+          ),
+          // Upload button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isUploadingDoc ? null : _uploadUserDoc,
+                icon: _isUploadingDoc
+                    ? const SizedBox(
+                        width: 14, height: 14,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : const Icon(Icons.upload_file_outlined, size: 16),
+                label: Text(_isUploadingDoc ? 'Subiendo...' : 'Subir documento',
+                    style: const TextStyle(fontSize: 12)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryRed,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                  elevation: 0,
+                ),
+              ),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 10),
+            child: Text('PDF, DOCX o TXT',
+                style: TextStyle(color: AppTheme.textGray, fontSize: 10)),
+          ),
+          const SizedBox(height: 8),
+          const Divider(height: 1),
+          // Doc list
+          Expanded(
+            child: _userDocs.isEmpty
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text(
+                        'Sin documentos.\nSube archivos para que la IA los use en este caso.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: AppTheme.textGray,
+                            fontSize: 12,
+                            height: 1.5),
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 6, horizontal: 8),
+                    itemCount: _userDocs.length,
+                    separatorBuilder: (_, __) =>
+                        const SizedBox(height: 2),
+                    itemBuilder: (_, i) {
+                      final doc = _userDocs[i];
+                      final ext =
+                          doc.source.split('.').last.toUpperCase();
+                      final extColor = ext == 'PDF'
+                          ? Colors.red.shade600
+                          : ext == 'DOCX'
+                              ? Colors.blue.shade600
+                              : Colors.green.shade600;
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: AppTheme.background,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: AppTheme.lightSilver),
+                        ),
+                        child: Row(children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: extColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(ext,
+                                style: TextStyle(
+                                    color: extColor,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    doc.source
+                                        .replaceAll(RegExp(r'\.\w+$'), ''),
+                                    style: const TextStyle(
+                                        fontSize: 11,
+                                        color: AppTheme.textDark,
+                                        fontWeight: FontWeight.w500),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text('${doc.chunks} fragmentos',
+                                      style: const TextStyle(
+                                          fontSize: 10,
+                                          color: AppTheme.textGray)),
+                                ]),
+                          ),
+                          GestureDetector(
+                            onTap: () => _deleteUserDoc(doc.source),
+                            child: const Padding(
+                              padding: EdgeInsets.only(left: 4),
+                              child: Icon(Icons.delete_outline,
+                                  size: 16, color: Colors.red),
+                            ),
+                          ),
+                        ]),
+                      );
+                    },
+                  ),
+          ),
+          // Base de conocimiento info
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Row(children: [
+              const Icon(Icons.library_books_outlined,
+                  size: 14, color: AppTheme.textGray),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Base OECE: ${_sources.length} doc${_sources.length == 1 ? '' : 's'}',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppTheme.textGray),
+                ),
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ─── Sources panel (right, desktop) ──────────────────────────────────────
 
   Widget _buildSourcesPanel() {
@@ -1214,7 +1495,7 @@ class _ChatScreenState extends State<ChatScreen> {
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            doc.source.replaceAll(RegExp(r'\.\.\w+$'), ''),
+            doc.source.replaceAll(RegExp(r'\.\w+$'), ''),
             style: const TextStyle(fontSize: 11, color: AppTheme.textDark),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
@@ -1250,6 +1531,11 @@ class _ChatScreenState extends State<ChatScreen> {
   // ─── Chat area ────────────────────────────────────────────────────────────
 
   Widget _buildChat() {
+    final showFollowUp = !_isLoading &&
+        _messages.length > 1 &&
+        _messages.last.role == MessageRole.assistant &&
+        !_messages.last.isLoading;
+
     return Column(
       children: [
         Expanded(
@@ -1261,11 +1547,15 @@ class _ChatScreenState extends State<ChatScreen> {
                   controller: _scrollController,
                   padding: const EdgeInsets.symmetric(
                       vertical: 16, horizontal: 4),
-                  itemCount:
-                      _messages.length + (_messages.length == 1 ? 1 : 0),
+                  itemCount: _messages.length +
+                      (_messages.length == 1 ? 1 : 0) +
+                      (showFollowUp ? 1 : 0),
                   itemBuilder: (_, i) {
                     if (_messages.length == 1 && i == 1) {
                       return _buildSuggestions();
+                    }
+                    if (showFollowUp && i == _messages.length) {
+                      return _buildFollowUpChips();
                     }
                     return ChatBubble(message: _messages[i]);
                   },
@@ -1278,33 +1568,87 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildSuggestions() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Category quick-select
           const Padding(
-            padding: EdgeInsets.only(left: 6, bottom: 10),
+            padding: EdgeInsets.only(left: 4, bottom: 10),
+            child: Text('Consulta por categoría',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textGray,
+                    letterSpacing: 0.5)),
+          ),
+          SizedBox(
+            height: 78,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _categories.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (_, i) {
+                final cat = _categories[i];
+                return GestureDetector(
+                  onTap: () => _send(cat.$3),
+                  child: Container(
+                    width: 100,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppTheme.lightSilver),
+                      boxShadow: [
+                        BoxShadow(
+                            color: Colors.black.withOpacity(0.04),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2)),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(cat.$1, color: AppTheme.primaryRed, size: 18),
+                        const SizedBox(height: 6),
+                        Text(cat.$2,
+                            style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.textDark),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 10),
             child: Text('Preguntas frecuentes',
                 style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
                     color: AppTheme.textGray,
                     letterSpacing: 0.5)),
           ),
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 7,
+            runSpacing: 7,
             children: _suggested
                 .map((q) => GestureDetector(
                       onTap: () => _send(q),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
+                            horizontal: 13, vertical: 8),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                              color: AppTheme.lightSilver),
+                          border: Border.all(color: AppTheme.lightSilver),
                           boxShadow: [
                             BoxShadow(
                                 color: Colors.black.withOpacity(0.04),
@@ -1313,8 +1657,105 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         child: Text(q,
                             style: const TextStyle(
-                                fontSize: 12.5,
+                                fontSize: 12,
                                 color: AppTheme.primaryRed)),
+                      ),
+                    ))
+                .toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Follow-up question chips shown below the last AI response
+  Widget _buildFollowUpChips() {
+    // Usa preguntas sugeridas del backend (generadas por IA basadas en la respuesta)
+    // Si el backend no devolvió sugerencias, usa el fallback por palabras clave
+    List<String> followUps;
+    if (_suggestedFromBackend.isNotEmpty) {
+      followUps = _suggestedFromBackend;
+    } else {
+      final lastAi = _messages.lastWhere(
+          (m) => m.role == MessageRole.assistant && !m.isLoading,
+          orElse: () => _messages.first);
+      final content = lastAi.content.toLowerCase();
+
+      if (content.contains('procedimiento') || content.contains('selección') || content.contains('licitaci')) {
+        followUps = [
+          '¿Cuándo se usa una adjudicación simplificada?',
+          '¿Qué es una contratación directa?',
+          '¿Cómo se publica un proceso en SEACE?',
+        ];
+      } else if (content.contains('penalidad') || content.contains('sanción') || content.contains('infractor')) {
+        followUps = [
+          '¿Cómo se calcula la penalidad por mora?',
+          '¿Se puede apelar una sanción del TCP?',
+          '¿Qué es el Tribunal de Contrataciones?',
+        ];
+      } else if (content.contains('valor referencial') || content.contains('precio') || content.contains('presupuesto')) {
+        followUps = [
+          '¿Quién aprueba el valor referencial?',
+          '¿Cuándo se actualiza el valor referencial?',
+          '¿Qué pasa si las ofertas superan el valor referencial?',
+        ];
+      } else if (content.contains('proveedor') || content.contains('rnp') || content.contains('registro')) {
+        followUps = [
+          '¿Cómo se inscribe en el RNP?',
+          '¿Cuáles son las causales de inhabilitación?',
+          '¿Qué documentos se requieren para licitar?',
+        ];
+      } else {
+        followUps = [
+          '¿Puedes darme más detalles?',
+          '¿Qué artículo de la Ley N° 32069 regula esto?',
+          '¿Cuáles son las excepciones a esta regla?',
+        ];
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 8),
+            child: Row(children: [
+              Icon(Icons.auto_awesome, size: 12, color: AppTheme.primaryRed),
+              SizedBox(width: 4),
+              Text('Continúa preguntando',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textGray,
+                      letterSpacing: 0.3)),
+            ]),
+          ),
+          Wrap(
+            spacing: 7,
+            runSpacing: 7,
+            children: followUps
+                .map((q) => GestureDetector(
+                      onTap: () => _send(q),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF3EA),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                              color: AppTheme.primaryRed.withOpacity(0.25)),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.arrow_forward_rounded,
+                              size: 11, color: AppTheme.primaryRed),
+                          const SizedBox(width: 5),
+                          Text(q,
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.primaryRed)),
+                        ]),
                       ),
                     ))
                 .toList(),
@@ -1368,7 +1809,9 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          if (_activeCaseId != null)
+          // En móvil: botón clip para subir doc (el panel no está visible)
+          if (_activeCaseId != null &&
+              MediaQuery.of(context).size.width < 720)
             GestureDetector(
               onTap: _isUploadingDoc ? null : _showUserDocsSheet,
               child: AnimatedContainer(
@@ -1508,7 +1951,7 @@ class _SourcesSheet extends StatelessWidget {
                           fontWeight: FontWeight.bold)),
                 ),
                 title: Text(
-                    doc.source.replaceAll(RegExp(r'\.\.\w+$'), ''),
+                    doc.source.replaceAll(RegExp(r'\.\w+$'), ''),
                     style: const TextStyle(fontSize: 13)),
                 subtitle: Text('${doc.chunks} fragmentos',
                     style: const TextStyle(

@@ -24,6 +24,7 @@ class AdminService {
         'Content-Type': 'application/json',
       };
 
+  /// Lista los documentos en la base vectorial
   Future<List<DocumentInfo>> listDocuments() async {
     final res = await http
         .get(Uri.parse('$_base${AppConfig.adminDocumentsEndpoint}'),
@@ -39,6 +40,7 @@ class AdminService {
     throw Exception('Error al obtener documentos: ${res.statusCode}');
   }
 
+  /// Sube e ingesta un documento al servidor
   Future<Map<String, dynamic>> uploadDocument({
     required String fileName,
     required Uint8List fileBytes,
@@ -65,6 +67,7 @@ class AdminService {
     throw Exception(errMsg);
   }
 
+  /// Elimina un documento de la base vectorial
   Future<void> deleteDocument(String sourceName) async {
     final encoded = Uri.encodeComponent(sourceName);
     final res = await http
@@ -81,6 +84,7 @@ class AdminService {
     }
   }
 
+  /// Estadísticas generales
   Future<Map<String, dynamic>> getStats() async {
     final res = await http
         .get(Uri.parse('$_base/stats'), headers: _headers)

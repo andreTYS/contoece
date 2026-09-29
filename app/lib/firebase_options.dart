@@ -1,3 +1,12 @@
+// INSTRUCCIONES:
+// 1. Ve a https://console.firebase.google.com
+// 2. Crea un proyecto nuevo o usa uno existente
+// 3. Instala FlutterFire CLI: dart pub global activate flutterfire_cli
+// 4. Ejecuta: flutterfire configure
+// 5. Ese comando reemplazará este archivo con tu configuración real
+//
+// POR AHORA este archivo es un placeholder. NO intentes compilar sin configurar Firebase.
+
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
@@ -28,6 +37,8 @@ class DefaultFirebaseOptions {
     storageBucket: 'contrataciones-790a0.firebasestorage.app',
     measurementId: 'G-WFJE12HN6K',
   );
+
+  // REEMPLAZA ESTOS VALORES CON LOS DE TU PROYECTO FIREBASE
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyAHt06UwWVL2XLcJ3jCycIEvjIQqaL0kSw',

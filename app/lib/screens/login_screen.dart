@@ -60,14 +60,17 @@ class _LoginScreenState extends State<LoginScreen>
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final isWide = size.width > 800;
+
     return Scaffold(
       body: isWide ? _buildWideLayout() : _buildMobileLayout(),
     );
   }
 
+  // ─── Layout desktop / tablet ──────────────────────────────────────────────
   Widget _buildWideLayout() {
     return Row(
       children: [
+        // Panel izquierdo — branding
         Expanded(
           flex: 5,
           child: Container(
@@ -109,10 +112,11 @@ class _LoginScreenState extends State<LoginScreen>
             ),
           ),
         ),
+        // Panel derecho — formulario
         Expanded(
           flex: 4,
           child: Container(
-            color: const Color(0xFFF3F4F6),
+            color: const Color(0xFFF8FAFC),
             child: Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(48),
@@ -134,6 +138,7 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
+  // ─── Layout móvil ─────────────────────────────────────────────────────────
   Widget _buildMobileLayout() {
     return Container(
       decoration: const BoxDecoration(
@@ -184,6 +189,8 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
+  // ─── Componentes ──────────────────────────────────────────────────────────
+
   Widget _buildLogo() {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -202,7 +209,8 @@ class _LoginScreenState extends State<LoginScreen>
             ],
           ),
           child: const Center(
-            child: Icon(Icons.account_balance, color: Colors.white, size: 24),
+            child: Icon(Icons.account_balance,
+                color: Colors.white, size: 24),
           ),
         ),
         const SizedBox(width: 12),
@@ -220,7 +228,8 @@ class _LoginScreenState extends State<LoginScreen>
               decoration: BoxDecoration(
                 color: AppTheme.silver.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: AppTheme.silver.withOpacity(0.5), width: 1),
+                border: Border.all(
+                    color: AppTheme.silver.withOpacity(0.5), width: 1),
               ),
               child: const Text('Contrataciones Públicas',
                   style: TextStyle(
@@ -273,7 +282,9 @@ class _LoginScreenState extends State<LoginScreen>
         color: dark ? Colors.white.withOpacity(0.07) : Colors.white,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: dark ? Colors.white.withOpacity(0.15) : const Color(0xFFE5E7EB),
+          color: dark
+              ? Colors.white.withOpacity(0.15)
+              : const Color(0xFFE5E7EB),
         ),
         boxShadow: dark
             ? []
@@ -305,6 +316,8 @@ class _LoginScreenState extends State<LoginScreen>
             ),
           ),
           const SizedBox(height: 32),
+
+          // Botón Google
           SizedBox(
             width: double.infinity,
             child: _isLoading
@@ -314,6 +327,7 @@ class _LoginScreenState extends State<LoginScreen>
                         strokeWidth: 2.5))
                 : _GoogleSignInButton(onTap: _signIn, dark: dark),
           ),
+
           const SizedBox(height: 24),
           Divider(
               color: dark
@@ -342,6 +356,8 @@ class _LoginScreenState extends State<LoginScreen>
   }
 }
 
+// ─── Botón Google custom ──────────────────────────────────────────────────────
+
 class _GoogleSignInButton extends StatefulWidget {
   final VoidCallback onTap;
   final bool dark;
@@ -368,7 +384,7 @@ class _GoogleSignInButtonState extends State<_GoogleSignInButton> {
             color: _hovered
                 ? (widget.dark
                     ? Colors.white.withOpacity(0.18)
-                    : const Color(0xFFF3F4F6))
+                    : const Color(0xFFF8FAFC))
                 : (widget.dark ? Colors.white.withOpacity(0.12) : Colors.white),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
@@ -389,6 +405,7 @@ class _GoogleSignInButtonState extends State<_GoogleSignInButton> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              // Logo Google SVG simplificado con colores reales
               SizedBox(
                 width: 20,
                 height: 20,
@@ -419,12 +436,18 @@ class _GoogleLogoPainter extends CustomPainter {
     final cx = size.width / 2;
     final cy = size.height / 2;
     final r = size.width / 2;
+
+    // Dibujar círculo de fondo blanco
     paint.color = Colors.white;
     canvas.drawCircle(Offset(cx, cy), r, paint);
+
+    // Letra G simplificada
     paint.color = const Color(0xFF4285F4);
     canvas.drawArc(
       Rect.fromCircle(center: Offset(cx, cy), radius: r * 0.7),
-      -0.3, 4.8, false,
+      -0.3,
+      4.8,
+      false,
       paint..style = PaintingStyle.stroke..strokeWidth = r * 0.28,
     );
   }

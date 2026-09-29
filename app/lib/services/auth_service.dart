@@ -3,6 +3,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../config/app_config.dart';
 
 class AuthService {
+  // En modo demo usamos un usuario ficticio
   static const String _demoUserId = 'demo-user-oece';
   static const String _demoName = 'Usuario Demo';
   static const String _demoEmail = 'demo@oece.gob.pe';
