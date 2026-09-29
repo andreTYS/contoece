@@ -352,6 +352,25 @@ def _split_text(text: str) -> list[str]:
     return chunks
 
 
+def _ocr_pdf(path: Path) -> str:
+    """OCR para PDFs escaneados (sin texto extraíble)."""
+    try:
+        import pytesseract
+        from pdf2image import convert_from_path
+        logger.info(f"OCR iniciado: {path.name}")
+        images = convert_from_path(str(path), dpi=200)
+        parts = []
+        for i, img in enumerate(images):
+            t = pytesseract.image_to_string(img, lang="spa")
+            if t.strip():
+                parts.append(f"[Página {i+1}]\n{t.strip()}")
+        logger.info(f"OCR completo: {path.name} — {len(parts)} páginas")
+        return "\n\n".join(parts)
+    except Exception as e:
+        logger.error(f"OCR falló: {e}")
+        return ""
+
+
 def _read_file(path: Path) -> str:
     ext = path.suffix.lower()
     if ext == ".pdf":
@@ -363,7 +382,12 @@ def _read_file(path: Path) -> str:
                     t = page.extract_text()
                     if t:
                         parts.append(f"[Página {i+1}]\n{t.strip()}")
-            return "\n\n".join(parts)
+            text = "\n\n".join(parts)
+            # Si no hay texto extraíble, intentar OCR
+            if not text.strip():
+                logger.info(f"PDF sin texto extraíble, aplicando OCR: {path.name}")
+                text = _ocr_pdf(path)
+            return text
         except Exception as e:
             logger.error(f"Error leyendo PDF: {e}")
             return ""
