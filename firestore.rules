@@ -11,9 +11,13 @@ service cloud.firestore {
 
     // ── Perfiles de usuarios ──────────────────────────────────────────────────
     match /users/{userId} {
-      // Cada usuario lee/escribe su propio perfil; admin lee/escribe todos
       allow read:  if request.auth != null && (request.auth.uid == userId || isAdmin());
       allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
+    }
+
+    // ── Casos de usuario (subcollección) ─────────────────────────────────────
+    match /users/{userId}/cases/{caseId} {
+      allow read, write: if request.auth != null && (request.auth.uid == userId || isAdmin());
     }
 
     // ── Roles pre-asignados por correo (solo admin) ──────────────────────────

@@ -211,7 +211,7 @@ class _LandingScreenState extends State<LandingScreen>
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Consulta la Ley N° 30225, directivas OECE y\nprocesos de selección con inteligencia artificial.',
+                    'Consulta la Ley N° 32069, DS 009-2025-EF y\ndirectivas OECE con inteligencia artificial.',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.7),
                       fontSize: wide ? 15.5 : 14,
@@ -221,7 +221,7 @@ class _LandingScreenState extends State<LandingScreen>
                   SizedBox(height: wide ? 36 : 24),
                   // Stats row
                   Row(children: [
-                    _buildStat('30225', 'Ley de\nContrataciones'),
+                    _buildStat('32069', 'Ley de\nContrataciones'),
                     const SizedBox(width: 28),
                     _buildStat('SEACE', 'Sistema\nintegrado'),
                     const SizedBox(width: 28),
@@ -296,8 +296,8 @@ class _LandingScreenState extends State<LandingScreen>
 
   Widget _buildFeaturesPanel() {
     final features = [
-      (Icons.gavel_outlined, _blue, 'Ley N° 30225 y reglamento',
-          'Consulta la normativa vigente y sus modificaciones.'),
+      (Icons.gavel_outlined, _blue, 'Ley N° 32069 y DS 009-2025-EF',
+          'Normativa vigente con modificaciones a 2026.'),
       (Icons.search_outlined, AppTheme.primaryRed, 'Búsqueda en OECE',
           'Documentos, directivas y comunicados oficiales.'),
       (Icons.verified_user_outlined, const Color(0xFF16A34A),
@@ -366,7 +366,7 @@ class _LandingScreenState extends State<LandingScreen>
 
   Widget _buildFeaturesMobile() {
     final features = [
-      (Icons.gavel_outlined, _blue, 'Ley N° 30225', 'Normativa vigente'),
+      (Icons.gavel_outlined, _blue, 'Ley N° 32069', 'Normativa vigente 2026'),
       (Icons.search_outlined, AppTheme.primaryRed, 'Búsqueda OECE', 'Documentos oficiales'),
       (Icons.verified_user_outlined, const Color(0xFF16A34A), 'Con fuentes', 'Referencias verificadas'),
       (Icons.folder_outlined, AppTheme.black, 'Por casos', 'Organiza expedientes'),
