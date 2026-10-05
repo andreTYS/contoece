@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Optional
 
 import chromadb
-import requests as http_requests
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -197,29 +196,20 @@ gemini_client: Optional[genai.Client] = None
 
 
 class GeminiEmbeddingFunction(EmbeddingFunction):
-    _BATCH_SIZE = 20
-
     def __call__(self, input: Documents) -> Embeddings:
         if not input or not GEMINI_API_KEY:
-            return []
+            return [[0.0] * 768] * len(input)
+        client_sync = genai.Client(api_key=GEMINI_API_KEY)
         all_embeddings: Embeddings = []
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{GEMINI_EMBEDDING_MODEL}:embedContent?key={GEMINI_API_KEY}"
-        )
         for text in input:
             try:
-                resp = http_requests.post(
-                    url,
-                    json={
-                        "model": f"models/{GEMINI_EMBEDDING_MODEL}",
-                        "content": {"parts": [{"text": str(text)}]},
-                        "taskType": "RETRIEVAL_DOCUMENT",
-                    },
-                    timeout=30,
+                result = client_sync.models.embed_content(
+                    model=GEMINI_EMBEDDING_MODEL,
+                    contents=str(text),
+                    config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
                 )
-                resp.raise_for_status()
-                all_embeddings.append(resp.json()["embedding"]["values"])
+                values = result.embeddings[0].values
+                all_embeddings.append(list(values))
             except Exception as e:
                 logger.error(f"Error embedding texto: {e}")
                 all_embeddings.append([0.0] * 768)
