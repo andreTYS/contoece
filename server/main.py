@@ -582,7 +582,7 @@ def _build_rag_context(request: "ChatRequest") -> tuple[str, list[str], list[str
         try:
             results = chroma_main_collection.query(
                 query_texts=[request.message],
-                n_results=min(8, chroma_main_collection.count()),
+                n_results=min(14, chroma_main_collection.count()),
                 include=["documents", "metadatas", "distances"],
             )
             docs      = results.get("documents", [[]])[0]
@@ -593,7 +593,7 @@ def _build_rag_context(request: "ChatRequest") -> tuple[str, list[str], list[str
             candidates = [
                 (d, m, dist)
                 for d, m, dist in zip(docs, metas, distances)
-                if dist < 0.65
+                if dist < 0.82
             ]
             candidates.sort(
                 key=lambda t: t[2] + _PESO_AUTORIDAD.get(
@@ -601,7 +601,7 @@ def _build_rag_context(request: "ChatRequest") -> tuple[str, list[str], list[str
                     0.10
                 )
             )
-            relevant = candidates[:5]
+            relevant = candidates[:7]
 
             if relevant:
                 documents_found += len(relevant)
@@ -629,7 +629,7 @@ def _build_rag_context(request: "ChatRequest") -> tuple[str, list[str], list[str
             if count_for_query > 0:
                 q_kwargs: dict = {
                     "query_texts": [request.message],
-                    "n_results": min(3, count_for_query),
+                    "n_results": min(5, count_for_query),
                     "include": ["documents", "metadatas", "distances"],
                 }
                 if request.case_id:
@@ -640,7 +640,7 @@ def _build_rag_context(request: "ChatRequest") -> tuple[str, list[str], list[str
                 u_distances = u_results.get("distances", [[]])[0]
                 u_relevant  = [
                     (d, m) for d, m, dist in zip(u_docs, u_metas, u_distances)
-                    if dist < 0.65
+                    if dist < 0.82
                 ]
                 if u_relevant:
                     documents_found += len(u_relevant)
