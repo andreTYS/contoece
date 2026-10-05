@@ -819,6 +819,68 @@ async def upload_user_document(user_id: str = Form(...), case_id: str = Form("")
     return result
 
 
+@app.post("/user/analyze")
+async def analyze_user_document(user_id: str = Form(...), case_id: str = Form(""), source_name: str = Form(...)):
+    """Resumen + análisis de cumplimiento normativo de un documento subido por el usuario."""
+    if not user_id or user_id == "anonymous":
+        raise HTTPException(status_code=400, detail="user_id requerido")
+    col = _get_user_collection(user_id)
+    if not col:
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+
+    try:
+        results = col.get(where={"source": source_name})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if not results["ids"]:
+        raise HTTPException(status_code=404, detail=f"Documento '{source_name}' no encontrado.")
+
+    # Ordenar chunks y compilar texto (filtrar por case_id si aplica)
+    pairs = list(zip(results["documents"], results["metadatas"]))
+    if case_id:
+        pairs = [(d, m) for d, m in pairs if m.get("case_id", "") == case_id]
+    pairs.sort(key=lambda x: x[1].get("chunk_index", 0))
+    full_text = "\n\n".join(d for d, _ in pairs)[:10000]
+
+    if not full_text.strip():
+        raise HTTPException(status_code=422, detail=f"No se pudo extraer contenido de '{source_name}'.")
+
+    analysis_prompt = (
+        f"Analiza el siguiente documento en el contexto del sistema de contrataciones públicas "
+        f"del Estado peruano (Ley N° 32069, DS 009-2025-EF y directivas OECE vigentes).\n\n"
+        f"**Documento analizado:** {source_name}\n\n"
+        f"**Contenido:**\n{full_text}\n\n"
+        "---\n\n"
+        "Proporciona:\n\n"
+        "## Resumen ejecutivo\n"
+        "Identifica qué tipo de documento es (contrato, bases, TDR, acta, expediente técnico, "
+        "cotización, etc.) y su propósito principal. 2-3 párrafos.\n\n"
+        "## Observaciones de cumplimiento normativo\n"
+        "Señala cláusulas, plazos o aspectos que podrían tener observaciones o riesgos según la "
+        "Ley 32069 y DS 009-2025-EF. Si no hay relación directa con contrataciones, indícalo.\n\n"
+        "## Puntos clave\n"
+        "Lista los aspectos más importantes para el proceso de contratación.\n\n"
+        "Formato: Markdown técnico-legal. Negritas para términos clave. Sin emojis."
+    )
+
+    async def generate():
+        full_response: list[str] = []
+        try:
+            async for token in _stream_gemini([{"role": "user", "content": analysis_prompt}]):
+                full_response.append(token)
+                yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
+            complete = "".join(full_response)
+            suggested = await _generar_sugerencias(f"Análisis de {source_name}", complete)
+            yield f"data: {json.dumps({'done': True, 'suggested_questions': suggested}, ensure_ascii=False)}\n\n"
+            logger.info(f"Analyze | user={user_id} case={case_id} doc='{source_name}'")
+        except Exception as e:
+            logger.error(f"Error análisis doc: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
 @app.delete("/user/document/{source_name}")
 async def delete_user_document(source_name: str, user_id: str):
     if not user_id or user_id == "anonymous":

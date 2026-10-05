@@ -28,6 +28,7 @@ class AppConfig {
   static const String userDocumentsEndpoint = '/user/documents';
   static const String userUploadEndpoint = '/user/upload';
   static const String userDeleteEndpoint = '/user/document';
+  static const String userAnalyzeEndpoint = '/user/analyze';
 
   // Google Sign-In Web Client ID
   // Obtén el tuyo en: https://console.firebase.google.com

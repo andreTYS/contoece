@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
@@ -43,6 +44,56 @@ class UserDocService {
       errMsg = body['detail'] ?? errMsg;
     } catch (_) {}
     throw Exception(errMsg);
+  }
+
+  /// Analiza un documento subido: resumen + cumplimiento normativo (streaming SSE).
+  /// Emite tokens de texto; al final emite '\x00DONE\x00{json}' con suggested_questions.
+  Stream<String> analyzeDocument({
+    required String userId,
+    required String caseId,
+    required String sourceName,
+  }) async* {
+    final uri = Uri.parse('$_base${AppConfig.userAnalyzeEndpoint}');
+    final request = http.MultipartRequest('POST', uri)
+      ..fields['user_id'] = userId
+      ..fields['case_id'] = caseId
+      ..fields['source_name'] = sourceName;
+
+    final client = http.Client();
+    try {
+      final streamed = await request.send().timeout(const Duration(seconds: 180));
+      if (streamed.statusCode != 200) {
+        final body = await http.Response.fromStream(streamed);
+        String detail = 'Error del servidor (${streamed.statusCode})';
+        try { detail = jsonDecode(utf8.decode(body.bodyBytes))['detail'] ?? detail; } catch (_) {}
+        throw Exception(detail);
+      }
+      String buffer = '';
+      await for (final chunk in streamed.stream.transform(utf8.decoder)) {
+        buffer += chunk;
+        while (true) {
+          final idx = buffer.indexOf('\n\n');
+          if (idx == -1) break;
+          final line = buffer.substring(0, idx).trim();
+          buffer = buffer.substring(idx + 2);
+          if (!line.startsWith('data:')) continue;
+          final raw = line.substring(5).trim();
+          try {
+            final data = jsonDecode(raw) as Map<String, dynamic>;
+            if (data.containsKey('error')) throw Exception(data['error']);
+            if (data['done'] == true) {
+              yield '\x00DONE\x00$raw';
+              return;
+            }
+            if (data.containsKey('token')) yield data['token'] as String;
+          } catch (e) {
+            if (e is Exception) rethrow;
+          }
+        }
+      }
+    } finally {
+      client.close();
+    }
   }
 
   Future<void> deleteDocument(String userId, String sourceName) async {

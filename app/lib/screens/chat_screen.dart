@@ -113,10 +113,15 @@ class _ChatScreenState extends State<ChatScreen> {
       await _loadUserDocs();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('"${file.name}" subido al caso.'),
+          content: Text('"${file.name}" subido. Analizando...'),
           backgroundColor: AppTheme.primaryRed,
           behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
         ));
+        // Cerrar el bottom sheet si está abierto
+        if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+        // Análisis automático en el chat
+        _analyzeDocAfterUpload(file.name);
       }
     } catch (e) {
       if (mounted) {
@@ -128,6 +133,105 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } finally {
       if (mounted) setState(() => _isUploadingDoc = false);
+    }
+  }
+
+  Future<void> _analyzeDocAfterUpload(String sourceName) async {
+    if (!mounted || _activeCaseId == null) return;
+    final uid = _uid;
+    final cid = _activeCaseId!;
+
+    final streamingId = 'analyze_${DateTime.now().millisecondsSinceEpoch}';
+    final headerMsg = ChatMessage(
+      id: 'analyze_header_${DateTime.now().millisecondsSinceEpoch}',
+      content: 'Documento **$sourceName** subido al caso. Analizando contenido...',
+      role: MessageRole.user,
+      timestamp: DateTime.now(),
+    );
+    final streamingMsg = ChatMessage(
+      id: streamingId,
+      content: '',
+      role: MessageRole.assistant,
+      timestamp: DateTime.now(),
+      isLoading: true,
+    );
+
+    setState(() {
+      _messages.add(headerMsg);
+      _messages.add(streamingMsg);
+      _isLoading = true;
+    });
+    _scrollToBottom();
+
+    try { await _firestoreService.saveCaseMessage(uid, cid, headerMsg); } catch (_) {}
+
+    final accumulated = StringBuffer();
+    List<String> finalSuggested = [];
+
+    try {
+      await for (final chunk in _userDocService.analyzeDocument(
+        userId: uid,
+        caseId: cid,
+        sourceName: sourceName,
+      )) {
+        if (!mounted) break;
+        if (chunk.startsWith('\x00DONE\x00')) {
+          try {
+            final raw = chunk.substring(6);
+            final data = jsonDecode(raw) as Map<String, dynamic>;
+            finalSuggested = (data['suggested_questions'] as List<dynamic>?)
+                    ?.map((s) => s.toString()).toList() ?? [];
+          } catch (_) {}
+          break;
+        }
+        accumulated.write(chunk);
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == streamingId);
+          if (idx >= 0) {
+            _messages[idx] = ChatMessage(
+              id: streamingId,
+              content: accumulated.toString(),
+              role: MessageRole.assistant,
+              timestamp: streamingMsg.timestamp,
+              isLoading: false,
+            );
+          }
+        });
+        _scrollToBottom();
+      }
+
+      final finalMsg = ChatMessage(
+        id: streamingId,
+        content: accumulated.toString(),
+        role: MessageRole.assistant,
+        timestamp: streamingMsg.timestamp,
+        sources: [],
+      );
+      if (mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == streamingId);
+          if (idx >= 0) _messages[idx] = finalMsg;
+          _isLoading = false;
+          if (finalSuggested.isNotEmpty) _suggestedFromBackend = finalSuggested;
+        });
+      }
+      try { await _firestoreService.saveCaseMessage(uid, cid, finalMsg); } catch (_) {}
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == streamingId);
+          if (idx >= 0) {
+            _messages[idx] = ChatMessage(
+              id: streamingId,
+              content: 'No se pudo analizar el documento automáticamente. '
+                  'Puedes preguntarme sobre él directamente.',
+              role: MessageRole.assistant,
+              timestamp: streamingMsg.timestamp,
+            );
+          }
+          _isLoading = false;
+        });
+      }
     }
   }
 
